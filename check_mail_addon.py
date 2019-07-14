@@ -14,7 +14,7 @@ import ConfigParser
 import os
 import sys
 
-from socket import error as socket_error
+from socket import error as socket_error, create_connection as create_connection
 
 #from threading import *
 from multiprocessing import *
@@ -345,11 +345,10 @@ def kodi_request(host, method, params=None, port=8080, user=None, password=None)
     base64str = base64.encodestring('{}:{}'.format(user, password))[:-1]
     header['Authorization'] = 'Basic {}'.format(base64str)
 
-  #try:
-  #  response = requests.post(url, data=json.dumps(data), headers=headers, timeout=10)
-  #except:
-  #  return False
-  return False
+  try:
+    response = requests.post(url, data=json.dumps(data), headers=headers, timeout=10)
+  except:
+    return False
 
   data = response.json()
   return (data['result'] == 'OK')
@@ -357,7 +356,7 @@ def kodi_request(host, method, params=None, port=8080, user=None, password=None)
 
 def host_is_up(host, port):
   try:
-    sock = socket.create_connection((host, port), timeout=3)
+    sock = create_connection((host, port), timeout=3)
   except:
     return False
 
@@ -481,9 +480,10 @@ if __name__ == '__main__':
             account['connection'].monitor(show)
         time.sleep(1)
 
-    # Let idle processes handle these exceptions:
     except (KeyboardInterrupt, SystemExit):
-      pass
+      break
+      # Let idle processes handle these exceptions:
+      #pass
 
     except Exception as e:
       log('An error occured: {}'.format(e), level='ERROR')
