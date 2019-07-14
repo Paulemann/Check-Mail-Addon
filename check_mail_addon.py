@@ -16,22 +16,12 @@ import sys
 
 from socket import error as socket_error
 
-from threading import *
+#from threading import *
 from multiprocessing import *
 from email.header import decode_header
 from email.utils import parseaddr
 
-import signal
 import argparse
-
-class GracefulExit(Exception):
-    pass
-
-
-def signal_handler(signum, frame):
-    raise GracefulExit()
-
-signal.signal(signal.SIGTERM, signal_handler)
 
 
 def is_mailaddress(a):
@@ -82,7 +72,7 @@ def read_config():
   global _kodi_, _accounts_
 
   if not os.path.exists(_config_file_):
-    log('Could not find configuration file \'{}\'.'.format(_config_file_), level='ERROR')
+    log('Could not find configuration file \'{}\''.format(_config_file_), level='ERROR')
     return False
 
   log('Reading configuration from file {} ...'.format(_config_file_), level='DEBUG')
@@ -107,35 +97,34 @@ def read_config():
 
     for host in _kodi_['hosts']:
       if not is_hostname(host):
-        log('Wrong or missing value(s) in configuration file (section: [KODI JSON-RPC]).')
+        log('Wrong or missing value(s) in configuration file (section: [KODI JSON-RPC])', level='ERROR')
         return False
     if not is_int(_kodi_['port']):
-      log('Wrong or missing value(s) in configuration file (section: [KODI JSON-RPC]).')
+      log('Wrong or missing value(s) in configuration file (section: [KODI JSON-RPC])', level='ERROR')
       return False
 
     for account in _accounts_:
-      account_name = account['name']
-      account['server'] = config.get(account_name, 'server')
-      if config.has_option(account_name, 'ssl'):
-        account['ssl']  = bool(config.get(account_name, 'ssl') == 'yes')
+      account['server'] = config.get(account['name'], 'server')
+      if config.has_option(account['name'], 'ssl'):
+        account['ssl']  = bool(config.get(account['name'], 'ssl') == 'yes')
       else:
         account['ssl']  = True
-      if config.has_option(account_name, 'ssl'):
-        account['port'] = int(config.get(account_name, 'port'))
+      if config.has_option(account['name'], 'ssl'):
+        account['port'] = int(config.get(account['name'], 'port'))
       else:
         account['port'] = 993
-      account['user']   = config.get(account_name, 'user')
-      account['passwd'] = config.get(account_name, 'password')
+      account['user']   = config.get(account['name'], 'user')
+      account['passwd'] = config.get(account['name'], 'password')
 
       if not is_hostname(account['server']) or not account['user'] or not account['passwd']:
-        log('Wrong or missing value(s) in configuration file (section [Mail Account]).')
+        log('Wrong or missing value(s) in configuration file (section [Mail Account])', level='ERROR')
         return False
 
   except:
-    log('Could not process configuration file.', level='ERROR')
+    log('Could not process configuration file', level='ERROR')
     return False
 
-  log('Configuration OK.', level='DEBUG')
+  log('Configuration OK', level='DEBUG')
 
   return True
 
@@ -160,18 +149,20 @@ class MailBox(object):
       self.imap.login(self.user, self.password)
       self.imap.select('Inbox', readonly=True)
     except self.imap.error as e:
-      if 'authentication failed' in str(e):
-        log('Authentication failure. Check username and password.')
+      if 'authentication failed' in str(e).lower():
+        log('Authentication failure; Check username and password', level='ERROR')
         raise Exception('Authentication failure')
       else:
-        log('Error: \"{}\"'.format(e))
+        log('Error: \'{}\''.format(e), level='ERROR')
         raise
 
   def monitor(self, callback=None):
-    self.isRunning = True
-
+    self.isRunning = False
     self.mon = Process(target=self.update, args=(callback,))
     self.mon.start()
+
+  def is_idle(self):
+    return self.mon.is_alive()
 
   def close(self):
     if self.isRunning:
@@ -229,18 +220,21 @@ class MailBox(object):
     except:
       pass
 
-    log('Connection reset: Couldn\'t reconnect', level='DEBUG')
+    log('Connection reset: Couldn\'t reconnect', level='ERROR')
     return None
 
   def update(self, callback):
     total_msgs = 0
+
     status, data = self.imap.select('Inbox', readonly=True)
     if status == 'OK':
       total_msgs = int(data[0])
       log('There are {} messages in INBOX'.format(total_msgs), level='DEBUG')
     else:
-      raise Exception('Mailbox \'INBOX\' does not exist')
+      log('Mailbox \'INBOX\' does not exist', level='ERROR')
+      return
 
+    self.isRunning = True
     while(self.isRunning):
       try:
         for num, msg in self.imap.idle():
@@ -260,21 +254,23 @@ class MailBox(object):
             total_msgs -= 1
             log('Mail deleted. {} messages remaining in INBOX'.format(total_msgs), level='DEBUG')
 
-      except (KeyboardInterrupt, SystemExit, GracefulExit):
-        log('Abort requested by user or system.', level='DEBUG')
+      except (KeyboardInterrupt, SystemExit):
+        log('Update(): Abort requested by user or system', level='DEBUG')
         break
 
       except Exception as e:
-        log('Abort due to exception: \"{}\"'.format(e), level='DEBUG')
-        if 'connection reset by peer' in str(e.args[0]).lower():
-          log('Connection reset: Trying to reconnect', level='DEBUG')
+        # Perhaps break directly and let parent process call reconnect()
+        if 'connection reset' in str(e).lower() or 'connection closed' in str(e).lower():
+          log('Update(): Trying to reconnect after connection was reset or closed', level='DEBUG')
           total_msgs = self.reconnect()
           if not total_msgs:
-            raise Exception('Unable to reconnect')
+            log('Update(): Reconnect error', level='ERROR')
             break
         else:
+          log('Update(): Abort due to exception \'{}\''.format(e), level='ERROR')
           break
 
+    self.isRunning = False
 
 def idle(connection):
   socket = None
@@ -298,25 +294,18 @@ def idle(connection):
           continue
         if response.startswith('* BYE '):
           log('{} IDLE: Connection closed'.format(connection.tag), level='DEBUG')
-          break # -> raise Exception("While IDLE: \'{}\'".format(response.replace('\r\n', '')))
+          raise Exception("Connection closed: \'{}\'".format(response.replace('\r\n', '')))
         if response.endswith('EXISTS') or response.endswith('EXPUNGE'):
           num, message = response.split()[1:3]
           yield num, message
       except socket_error as e:
-        if 'timed out' in str(e.args[0]).lower():
+        if 'timed out' in str(e).lower():
           log('{} IDLE: Connection timed out'.format(connection.tag), level='DEBUG')
           connection.done()
         else:
-          log('{} IDLE: Connection error (\'{}\')'.format(connection.tag, e), level='DEBUG')
           raise
-      except connection.abort:
-        log('{} IDLE: Connection abort'.format(connection.tag), level='DEBUG')
-        raise Exception("While IDLE: \'{}\'".format(response.replace('\r\n', '')))
-      except (KeyboardInterrupt, SystemExit, GracefulExit):
-        raise
       except:
-        log('{} IDLE: Unknown error'.format(connection.tag), level='DEBUG')
-        pass
+        raise
   except:
     raise
 
@@ -331,7 +320,7 @@ def done(connection):
       response = connection.readline().strip()
       log('Terminating \'{} IDLE\'; Response: \'{}\''.format(connection.tag, response.replace('\r\n', '')), level='DEBUG')
     if not response.startswith('{} OK'.format(connection.tag)):
-      log('{} IDLE: Unexpected Response'.format(connection.tag), level='DEBUG')
+      log('{} IDLE: Unexpected Response'.format(connection.tag), level='ERROR')
       raise Exception('While terminating IDLE: \'{}\''.format(response.replace('\r\n', '')))
   except:
     raise
@@ -387,7 +376,7 @@ def notify(sender, subject):
       log('Notfying host {}'.format(host))
       kodi_request(host, 'GUI.ShowNotification', params={'title': notification_title, 'message': notification_text, 'displaytime': 2000}, port=_kodi_['port'], user=_kodi_['user'], password=_kodi_['passwd'])
     else:
-      log('Host {} is down. Requests canceled.'.format(host))
+      log('Host {} is down; Requests canceled'.format(host))
 
 
 def show(message):
@@ -397,7 +386,7 @@ def show(message):
   try:
     from_name, from_address = parseaddr(message['From'])
     if not from_address:
-      log('Could not parse sender\'s mail address from header.', level='DEBUG')
+      log('Could not parse sender\'s mail address from header', level='ERROR')
       return False
 
     name, encoding = decode_header(from_name)[0]
@@ -467,34 +456,37 @@ if __name__ == '__main__':
       account['connection'] = MailBox(account['server'], account['user'], account['passwd'])
 
     except Exception as e:
-      log('Error \'{}\' occured'.format(e))
+      log('Error \'{}\' occured'.format(e), level='ERROR')
       sys.exit(1)
 
-    except:
-      log('Unknown Error occured')
-      sys.exit(1)
+    # Fetch unread mails only for today:
+    #today = datetime.date.today().strftime("%d-%b-%Y")
+    #uid_list = account['connection'].search('ON', today)
 
-    today = datetime.date.today().strftime("%d-%b-%Y")
-    uid_list = account['connection'].search('ON', today)
-
-    if uid_list:
-      for uid in uid_list:
-        msg = account['connection'].fetch(uid)
-        show(msg)
+    #if uid_list:
+    #  for uid in uid_list:
+    #    msg = account['connection'].fetch(uid)
+    #    show(msg)
 
     account['connection'].monitor(show)
 
   while(True):
     try:
-      raw_input("Press Enter to continue...")
-      break
+      # Check if idle processes are still alive:
+      for account in _accounts_:
+        if not account['connection'].is_idle():
+          if not account['connection'].reconnect():
+            raise Exception('Idle process stopped')
+          else:
+            account['connection'].monitor(show)
+        time.sleep(1)
 
-    except (KeyboardInterrupt, SystemExit, GracefulExit):
-      log('Abort', level='DEBUG')
-      break
+    # Let idle processes handle these exceptions:
+    except (KeyboardInterrupt, SystemExit):
+      pass
 
     except Exception as e:
-      log('Error \'{}\' occured.'.format(e), level='DEBUG')
+      log('An error occured: {}'.format(e), level='ERROR')
       break
 
   for account in _accounts_:
