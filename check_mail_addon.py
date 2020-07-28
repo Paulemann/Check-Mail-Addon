@@ -149,11 +149,12 @@ class MailBox(object):
       self.imap.login(self.user, self.password)
       self.imap.select('Inbox', readonly=True)
     except self.imap.error as e:
-      if 'authentication failed' in str(e).lower():
-        log('Authentication failure; Check username and password', level='ERROR')
+      if 'authentication failed' or 'login failed' in str(e).lower():
+        #log('Authentication failure for user \'{}\'; Check username and password'.format(self.user), level='ERROR')
+        log('Error: \'{}\' for user \'{}\'; Check username and password'.format(e, self.user), level='ERROR')
         raise Exception('Authentication failure')
       else:
-        log('Error: \'{}\''.format(e), level='ERROR')
+        log('Error: \'{}\' for user \'{}\''.format(e, self.user), level='ERROR')
         raise
 
   def monitor(self, callback=None):
@@ -165,9 +166,9 @@ class MailBox(object):
     return self.mon.is_alive()
 
   def close(self):
-    if self.isRunning:
-      self.mon.terminate()
-      self.isRunning = False
+    #if self.isRunning:
+    self.mon.terminate()
+    self.isRunning = False
     try:
       self.imap.close()
       self.imap.logout()
@@ -229,7 +230,7 @@ class MailBox(object):
     status, data = self.imap.select('Inbox', readonly=True)
     if status == 'OK':
       total_msgs = int(data[0])
-      log('There are {} messages in INBOX'.format(total_msgs), level='DEBUG')
+      log('There are {} messages in INBOX of user \'{}\''.format(total_msgs, self.user), level='DEBUG')
     else:
       log('Mailbox \'INBOX\' does not exist', level='ERROR')
       return
@@ -427,7 +428,8 @@ if __name__ == '__main__':
   parser.add_argument('-d', '--debug', dest='debug', action='store_true', help="Output debug messages (Default: False)")
   parser.add_argument('-l', '--logfile', dest='log_file', default=None, help="Path to log file (Default: None=stdout)")
   parser.add_argument('-t', '--timeout', dest='timeout', default=1500, help="Connection Timeout (Default: 1500)")
-  parser.add_argument('-n', '--notify', dest='notify_title', default='New Message', help="Notification Title (Default: New Message)")
+  #parser.add_argument('-n', '--notify', dest='notify_title', default='New Message', help="Notification Title (Default: New Message)")
+  parser.add_argument('-n', '--notify', dest='notify_title', default='Neue Nachricht', help="Notification Title (Default: New Message)")
   parser.add_argument('-c', '--config', dest='config_file', default=os.path.splitext(os.path.basename(__file__))[0] + '.ini', help="Path to config file (Default: <Script Name>.ini)")
 
   args = parser.parse_args()
@@ -450,13 +452,18 @@ if __name__ == '__main__':
   if not read_config():
     sys.exit(1)
 
+  Failure = False
+
   for account in _accounts_:
     try:
       account['connection'] = MailBox(account['server'], account['user'], account['passwd'])
 
     except Exception as e:
-      log('Error \'{}\' occured'.format(e), level='ERROR')
-      sys.exit(1)
+      log('Fatal error \'{}\' occured. Abort.'.format(e), level='ERROR')
+      Failure = True
+      break
+
+    log('Connection successfully established for user \'{}\''.format(account['user']), level='DEBUG')
 
     # Fetch unread mails only for today:
     #today = datetime.date.today().strftime("%d-%b-%Y")
@@ -469,7 +476,7 @@ if __name__ == '__main__':
 
     account['connection'].monitor(show)
 
-  while(True):
+  while(not Failure):
     try:
       # Check if idle processes are still alive:
       for account in _accounts_:
@@ -490,6 +497,8 @@ if __name__ == '__main__':
       break
 
   for account in _accounts_:
-    account['connection'].close()
+    if 'connection' in account:
+      account['connection'].close()
 
-  sys.exit()
+  status = 1 if Failure else 0
+  sys.exit(status)
