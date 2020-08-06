@@ -16,12 +16,20 @@ import sys
 
 from socket import error as socket_error, create_connection as create_connection
 
-#from threading import *
 from multiprocessing import *
 from email.header import decode_header
 from email.utils import parseaddr
 
 import argparse
+
+import signal
+
+
+def handler_stop_signals(signum, frame):
+  sys.exit(0)
+
+signal.signal(signal.SIGINT, handler_stop_signals)
+signal.signal(signal.SIGTERM, handler_stop_signals)
 
 
 def is_mailaddress(a):
@@ -65,17 +73,16 @@ def log(message, level='INFO'):
       logging.crtitcal(message)
   else:
      if level != 'DEBUG' or _debug_:
-       print '[' + level + ']: ' + message
+       #print '[' + level + ']: ' + message
+       print '[{:^5s}]: {}'.format(level,  message)
 
 
 def read_config():
-  global _kodi_, _accounts_
+  global _kodi_, _accounts_, _notification_title_
 
   if not os.path.exists(_config_file_):
     log('Could not find configuration file \'{}\''.format(_config_file_), level='ERROR')
     return False
-
-  log('Reading configuration from file {} ...'.format(_config_file_), level='DEBUG')
 
   try:
     # Read the config file
@@ -85,10 +92,13 @@ def read_config():
 
     _kodi_ = {}
     _accounts_ = []
+    _notification_title_ = 'New Message for'
 
     for section_name in config.sections():
       if is_mailaddress(section_name):
         _accounts_.append({'name': section_name})
+      if section_name == 'Customization':
+        _notification_title_ = config.get('Customization', 'newmessagefor')
 
     _kodi_['hosts']   = [p.strip(' "\'') for p in config.get('KODI JSON-RPC', 'hostname').split(',')]
     _kodi_['port']    = int(config.get('KODI JSON-RPC', 'port'))
@@ -99,6 +109,7 @@ def read_config():
       if not is_hostname(host):
         log('Wrong or missing value(s) in configuration file (section: [KODI JSON-RPC])', level='ERROR')
         return False
+
     if not is_int(_kodi_['port']):
       log('Wrong or missing value(s) in configuration file (section: [KODI JSON-RPC])', level='ERROR')
       return False
@@ -124,8 +135,6 @@ def read_config():
     log('Could not process configuration file', level='ERROR')
     return False
 
-  log('Configuration OK', level='DEBUG')
-
   return True
 
 
@@ -138,35 +147,19 @@ class MailBox(object):
     self.port = port
 
     try:
-      if self.ssl:
-        if not self.port:
-          self.port = 993
-        self.imap = imaplib.IMAP4_SSL(self.server, self.port)
-      else:
-        if not self.port:
-          self.port = 143
-        self.imap = imaplib.IMAP4(self.server, self.port)
-      self.imap.login(self.user, self.password)
-      self.imap.select('Inbox', readonly=True)
-    except self.imap.error as e:
-      if 'authentication failed' or 'login failed' in str(e).lower():
-        #log('Authentication failure for user \'{}\'; Check username and password'.format(self.user), level='ERROR')
-        log('Error: \'{}\' for user \'{}\'; Check username and password'.format(e, self.user), level='ERROR')
-        raise Exception('Authentication failure')
-      else:
-        log('Error: \'{}\' for user \'{}\''.format(e, self.user), level='ERROR')
-        raise
+       self.connect()
+    except:
+       raise
 
-  def monitor(self, callback=None):
+  def monitor(self, folder='Inbox', callback=None):
     self.isRunning = False
-    self.mon = Process(target=self.update, args=(callback,))
+    self.mon = Process(target=self.update, args=(folder, callback,))
     self.mon.start()
 
   def is_idle(self):
     return self.mon.is_alive()
 
   def close(self):
-    #if self.isRunning:
     self.mon.terminate()
     self.isRunning = False
     try:
@@ -200,39 +193,51 @@ class MailBox(object):
           return resp[2]
     return None
 
-  def reconnect(self):
+  def connect(self, folder=None):
     try:
-      self.imap.close()
-      self.imap.logout()
-    except:
-      pass
+      if self.ssl:
+        if not self.port:
+          self.port = 993
+        self.imap = imaplib.IMAP4_SSL(self.server, self.port)
+      else:
+        if not self.port:
+          self.port = 143
+        self.imap = imaplib.IMAP4(self.server, self.port)
 
-    if self.ssl:
-      self.imap = imaplib.IMAP4_SSL(self.server, self.port)
-    else:
-      self.imap = imaplib.IMAP4(self.server, self.port)
+    except Exception as e:
+      log('Error: \'{}\' while connecting to \'{}:{}\'; Check name or IP address and port'.format(e, self.server, self.port), level='DEBUG')
+      raise Exception('Connection failure')
 
+    log('Connected to \'{}\''.format(self.server), level='DEBUG')
     try:
       self.imap.login(self.user, self.password)
-      status, data = self.imap.select('Inbox', readonly=True)
-      if status == 'OK':
-        log('Connection reset: Successfully reconnected', level='DEBUG')
-        return int(data[0])
-    except:
-      pass
 
-    log('Connection reset: Couldn\'t reconnect', level='ERROR')
+    except self.imap.error as e:
+      log('Error: \'{}\' while logging in \'{}\'; Check username and password'.format(e, self.user), level='DEBUG')
+      raise Exception('Authentication failure')
+
+    log('\'{}\' logged in'.format(self.user), level='DEBUG')
+
+    if folder:
+      status, data = self.imap.select(folder, readonly=True)
+      if status == 'OK':
+        log('Mailbox folder \'{}\' of \'{}\' with {} messages selected'.format(folder, self.user, int(data[0])), level='DEBUG')
+        return int(data[0])
+      else:
+        log('Unable to select mailbox folder \'{}\' of \'{}\''.format(folder, self.user), level='DEBUG')
+        raise Exception('Mailbox failure')
+
     return None
 
-  def update(self, callback):
+  def update(self, folder, callback):
     total_msgs = 0
 
-    status, data = self.imap.select('Inbox', readonly=True)
+    status, data = self.imap.select(folder, readonly=True)
     if status == 'OK':
+      log('Mailbox folder \'{}\' of \'{}\' with {} messages selected'.format(folder, self.user, int(data[0])), level='DEBUG')
       total_msgs = int(data[0])
-      log('There are {} messages in INBOX of user \'{}\''.format(total_msgs, self.user), level='DEBUG')
     else:
-      log('Mailbox \'INBOX\' does not exist', level='ERROR')
+      log('Unable to select mailbox folder \'{}\' of \'{}\''.format(folder, self.user), level='ERROR')
       return
 
     self.isRunning = True
@@ -246,29 +251,18 @@ class MailBox(object):
             uid = self.num2uid(num)
             email_msg = self.fetch(uid)
             if email_msg and callback:
-              callback(email_msg)
-
-          #elif msg == 'EXISTS':
-          #  total_msgs = int(num)
+              callback(self.user, email_msg)
 
           elif msg == 'EXPUNGE':
             total_msgs -= 1
-            log('Mail deleted. {} messages remaining in INBOX'.format(total_msgs), level='DEBUG')
-
-      except (KeyboardInterrupt, SystemExit):
-        log('Update(): Abort requested by user or system', level='DEBUG')
-        break
+            log('Mail deleted. {} messages remaining in \'{}\''.format(total_msgs, folder), level='DEBUG')
 
       except Exception as e:
-        # Perhaps break directly and let parent process call reconnect()
-        if 'connection reset' in str(e).lower() or 'connection closed' in str(e).lower():
-          log('Update(): Trying to reconnect after connection was reset or closed', level='DEBUG')
-          total_msgs = self.reconnect()
-          if not total_msgs:
-            log('Update(): Reconnect error', level='ERROR')
-            break
-        else:
-          log('Update(): Abort due to exception \'{}\''.format(e), level='ERROR')
+        log('An error occured: \'{}\'. Re-connecting to \'{}\'.'.format(e, self.server), level='ERROR')
+        try:
+          total_msgs = self.connect(folder=folder)
+        except Exception as e:
+          log('Error: \'{}\' while connecting to \'{}\'. Abort.'.format(e, self.server), level='ERROR')
           break
 
     self.isRunning = False
@@ -284,6 +278,7 @@ def idle(connection):
     response = connection.readline().strip()
     log('Initializing \'{} IDLE\'; Response: \'{}\''.format(connection.tag, response.replace('\r\n', '')), level='DEBUG')
     if not response.startswith('+'):
+      log('{} IDLE: Unexpected Response'.format(connection.tag), level='ERROR')
       raise Exception('While initializing IDLE: \'{}\''.format(response.replace('\r\n', '')))
     socket.settimeout(_socket_timeout_)
     connection.loop = True
@@ -364,22 +359,22 @@ def host_is_up(host, port):
   return True
 
 
-def notify(sender, subject):
+def notify(user, sender, subject):
   if not sender or not subject:
     return
 
-  notification_title = _notification_title_
+  notification_title = '{} {}'.format(_notification_title_, user)
   notification_text = '{}: {}'.format(sender, subject)
 
   for host in _kodi_['hosts']:
     if host_is_up(host, _kodi_['port']):
-      log('Notfying host {}'.format(host))
+      log('Notfying host {}'.format(host), level='DEBUG')
       kodi_request(host, 'GUI.ShowNotification', params={'title': notification_title, 'message': notification_text, 'displaytime': 2000}, port=_kodi_['port'], user=_kodi_['user'], password=_kodi_['passwd'])
     else:
-      log('Host {} is down; Requests canceled'.format(host))
+      log('Host {} is down; Requests canceled'.format(host), level='DEBUG')
 
 
-def show(message):
+def show(user, message):
   if not message:
     return False
 
@@ -412,10 +407,10 @@ def show(message):
 
   if from_name:
     log('From: {} <{}> | Subject: {}'.format(from_name, from_address, subject))
-    notify(from_name, subject)
+    notify(user, from_name, subject)
   else:
     log('From: {} | Subject: {}'.format(from_address, subject))
-    notify(from_address, subject)
+    notify(user, from_address, subject)
 
   return True
 
@@ -428,15 +423,12 @@ if __name__ == '__main__':
   parser.add_argument('-d', '--debug', dest='debug', action='store_true', help="Output debug messages (Default: False)")
   parser.add_argument('-l', '--logfile', dest='log_file', default=None, help="Path to log file (Default: None=stdout)")
   parser.add_argument('-t', '--timeout', dest='timeout', default=1500, help="Connection Timeout (Default: 1500)")
-  #parser.add_argument('-n', '--notify', dest='notify_title', default='New Message', help="Notification Title (Default: New Message)")
-  parser.add_argument('-n', '--notify', dest='notify_title', default='Neue Nachricht', help="Notification Title (Default: New Message)")
   parser.add_argument('-c', '--config', dest='config_file', default=os.path.splitext(os.path.basename(__file__))[0] + '.ini', help="Path to config file (Default: <Script Name>.ini)")
 
   args = parser.parse_args()
 
   _config_file_ = args.config_file
   _log_file_ = args.log_file
-  _notification_title_ = args.notify_title
   _debug_ = args.debug
   _socket_timeout_ = int(args.timeout)
 
@@ -445,25 +437,27 @@ if __name__ == '__main__':
 
   log('Output Debug:  {}'.format(_debug_), level='DEBUG')
   log('Log File:      {}'.format(_log_file_), level='DEBUG')
-  log('Config File:   {}'.format(_config_file_), level='DEBUG')
   log('Conn. Timeout: {}'.format(_socket_timeout_), level='DEBUG')
-  log('Notif. Title:  {}'.format(_notification_title_), level='DEBUG')
+  log('Config. File:  {}'.format(_config_file_), level='DEBUG')
 
+  log('Reading configuration from file ...', level='DEBUG')
   if not read_config():
     sys.exit(1)
+
+  log('Configuration: OK', level='DEBUG')
+  log('Notif. Title:  \'{}\''.format(_notification_title_), level='DEBUG')
 
   Failure = False
 
   for account in _accounts_:
+    log('Processing mail account \'{}\' ...'.format(account['name']), level='DEBUG')
     try:
       account['connection'] = MailBox(account['server'], account['user'], account['passwd'])
 
     except Exception as e:
-      log('Fatal error \'{}\' occured. Abort.'.format(e), level='ERROR')
+      log('A fatal error occured: \'{}\'. Abort.'.format(e), level='ERROR')
       Failure = True
       break
-
-    log('Connection successfully established for user \'{}\''.format(account['user']), level='DEBUG')
 
     # Fetch unread mails only for today:
     #today = datetime.date.today().strftime("%d-%b-%Y")
@@ -472,28 +466,37 @@ if __name__ == '__main__':
     #if uid_list:
     #  for uid in uid_list:
     #    msg = account['connection'].fetch(uid)
-    #    show(msg)
+    #    show(account['user'], msg)
 
-    account['connection'].monitor(show)
+    account['connection'].monitor(callback=show)
+    time.sleep(1)
 
   while(not Failure):
     try:
-      # Check if idle processes are still alive:
+      # Check if processes are still alive:
       for account in _accounts_:
-        if not account['connection'].is_idle():
-          if not account['connection'].reconnect():
-            raise Exception('Idle process stopped')
-          else:
-            account['connection'].monitor(show)
+        if 'connection' in account and not account['connection'].is_idle():
+          log('Idle process appears to be dead. Re-connecting to \'{}\'.'.format(account['server']), level='ERROR')
+          try:
+            account['connection'].connect()
+          except Exception as e:
+            log('Error: \'{}\' while connecting to \'{}\'. Abort.'.format(e, account['server']), level='ERROR')
+            Failure = True
+            break
+          account['connection'].monitor(callback=show)
         time.sleep(1)
 
     except (KeyboardInterrupt, SystemExit):
+      # Overwrite output of '^C' in case of KeyboardInterrupt:
+      sys.stderr.write('\r')
+      log('Abort requested by user or system', level='DEBUG')
       break
-      # Let idle processes handle these exceptions:
-      #pass
 
+    # Handle any unexpected error:
     except Exception as e:
-      log('An error occured: {}'.format(e), level='ERROR')
+      log('An unexpected error occured: \'{}\'. Abort.'.format(e), level='ERROR')
+      Failure = True
+      # Explicit break isn't neccessary here, but doesn't hurt either:
       break
 
   for account in _accounts_:
