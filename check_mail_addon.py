@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 import imaplib
@@ -7,14 +7,15 @@ import time
 import datetime
 import requests
 import json
-import HTMLParser
+import html.parser
 
 import logging
-import ConfigParser
+import configparser
 import os
 import sys
 
 from socket import error as socket_error, create_connection as create_connection
+#import errno
 
 from multiprocessing import *
 from email.header import decode_header
@@ -73,12 +74,12 @@ def log(message, level='INFO'):
       logging.crtitcal(message)
   else:
      if level != 'DEBUG' or _debug_:
-       #print '[' + level + ']: ' + message
-       print '[{:^5s}]: {}'.format(level,  message)
+       #print('[' + level + ']: ' + message)
+       print('[{:^5s}]: {}'.format(level,  message))
 
 
 def read_config():
-  global _kodi_, _accounts_, _notification_title_
+  global _kodi_, _accounts_, _attachments_, _notification_title_, _msg_from_, _msg_subject_
 
   if not os.path.exists(_config_file_):
     log('Could not find configuration file \'{}\''.format(_config_file_), level='ERROR')
@@ -86,24 +87,30 @@ def read_config():
 
   try:
     # Read the config file
-    config = ConfigParser.ConfigParser()
+    config = configparser.ConfigParser()
 
     config.read([os.path.abspath(_config_file_)])
 
-    _kodi_ = {}
-    _accounts_ = []
+    _kodi_               = {}
+    _attachments_        = {}
+    _accounts_           = []
     _notification_title_ = 'New Message for'
+    _msg_from_           = 'From'
+    _msg_subject_        = 'Subject'
 
     for section_name in config.sections():
       if is_mailaddress(section_name):
         _accounts_.append({'name': section_name})
+
       if section_name == 'Customization':
         _notification_title_ = config.get('Customization', 'newmessagefor')
+        _msg_from_           = config.get('Customization', 'from')
+        _msg_subject_        = config.get('Customization', 'subject')
 
-    _kodi_['hosts']   = [p.strip(' "\'') for p in config.get('KODI JSON-RPC', 'hostname').split(',')]
-    _kodi_['port']    = int(config.get('KODI JSON-RPC', 'port'))
-    _kodi_['user']    = config.get('KODI JSON-RPC', 'username')
-    _kodi_['passwd']  = config.get('KODI JSON-RPC', 'password')
+    _kodi_['hosts']  = [p.strip(' "\'') for p in config.get('KODI JSON-RPC', 'hostname').split(',')]
+    _kodi_['port']   = int(config.get('KODI JSON-RPC', 'port'))
+    _kodi_['user']   = config.get('KODI JSON-RPC', 'username')
+    _kodi_['passwd'] = config.get('KODI JSON-RPC', 'password')
 
     for host in _kodi_['hosts']:
       if not is_hostname(host):
@@ -113,6 +120,10 @@ def read_config():
     if not is_int(_kodi_['port']):
       log('Wrong or missing value(s) in configuration file (section: [KODI JSON-RPC])', level='ERROR')
       return False
+
+    _attachments_['path'] = config.get('Attachments', 'path')
+    _attachments_['type'] = [p.strip(' "\'') for p in config.get('Attachments', 'type').split(',')]
+    _attachments_['from'] = [p.strip(' "\'') for p in config.get('Attachments', 'from').split(',')]
 
     for account in _accounts_:
       account['server'] = config.get(account['name'], 'server')
@@ -177,9 +188,12 @@ class MailBox(object):
       return []
 
   def fetch(self, uid):
-    status, data = self.imap.uid('fetch', uid, '(BODY.PEEK[HEADER])')
+    #status, data = self.imap.uid('fetch', uid, '(BODY.PEEK[HEADER])')
+    #status, data = self.imap.uid('fetch', uid, '(RFC822)')
+    status, data = self.imap.uid('fetch', uid, '(BODY.PEEK[])')
     if status == 'OK' and data[0]:
-      email_msg = email.message_from_string(data[0][1])
+      email_msg = email.message_from_string(data[0][1].decode('utf-8'))
+      #email_msg = email.message_from_bytes(data[0][1])
       return email_msg
     else:
       return None
@@ -188,8 +202,8 @@ class MailBox(object):
     status, data = self.imap.fetch(num, 'UID')
     if status == 'OK' and data:
       for item in data:
-        resp = [i.strip('()') for i in item.split()]
-        if resp[0] == num and resp[1] == 'UID':
+        resp = [i.strip(b'()') for i in item.split()]
+        if resp[0] == num and resp[1] == b'UID':
           return resp[2]
     return None
 
@@ -213,18 +227,18 @@ class MailBox(object):
       self.imap.login(self.user, self.password)
 
     except self.imap.error as e:
-      log('Error: \'{}\' while logging in \'{}\'; Check username and password'.format(e, self.user), level='DEBUG')
+      log('Error: \'{}\' while logging in user \'{}\'; Check username and password'.format(e, self.user), level='DEBUG')
       raise Exception('Authentication failure')
 
-    log('\'{}\' logged in'.format(self.user), level='DEBUG')
+    log('Mailbox user \'{}\' logged in'.format(self.user), level='DEBUG')
 
     if folder:
       status, data = self.imap.select(folder, readonly=True)
       if status == 'OK':
-        log('Mailbox folder \'{}\' of \'{}\' with {} messages selected'.format(folder, self.user, int(data[0])), level='DEBUG')
+        log('Mailbox folder \'{}\' of user \'{}\' selected: {} messages'.format(folder, self.user, int(data[0])), level='DEBUG')
         return int(data[0])
       else:
-        log('Unable to select mailbox folder \'{}\' of \'{}\''.format(folder, self.user), level='DEBUG')
+        log('Unable to select mailbox folder \'{}\' of user \'{}\''.format(folder, self.user), level='DEBUG')
         raise Exception('Mailbox failure')
 
     return None
@@ -234,17 +248,17 @@ class MailBox(object):
 
     status, data = self.imap.select(folder, readonly=True)
     if status == 'OK':
-      log('Mailbox folder \'{}\' of \'{}\' with {} messages selected'.format(folder, self.user, int(data[0])), level='DEBUG')
+      log('Mailbox folder \'{}\' of user \'{}\' selected: {} messages'.format(folder, self.user, int(data[0])), level='DEBUG')
       total_msgs = int(data[0])
     else:
-      log('Unable to select mailbox folder \'{}\' of \'{}\''.format(folder, self.user), level='ERROR')
+      log('Unable to select mailbox folder \'{}\' of user \'{}\''.format(folder, self.user), level='ERROR')
       return
 
     self.isRunning = True
     while(self.isRunning):
       try:
         for num, msg in self.imap.idle():
-          if msg == 'EXISTS' and int(num) > total_msgs:
+          if msg == b'EXISTS' and int(num) > total_msgs:
             self.imap.done()
             total_msgs = int(num)
 
@@ -253,12 +267,16 @@ class MailBox(object):
             if email_msg and callback:
               callback(self.user, email_msg)
 
-          elif msg == 'EXPUNGE':
+          elif msg == b'EXPUNGE':
             total_msgs -= 1
             log('Mail deleted. {} messages remaining in \'{}\''.format(total_msgs, folder), level='DEBUG')
 
       except Exception as e:
-        log('An error occured: \'{}\'. Re-connecting to \'{}\'.'.format(e, self.server), level='ERROR')
+        if any(s in str(e).lower() for s in ['timed out', 'timeout']):
+          log('Connection timed out for user \'{}\'. Re-connecting to \'{}\'.'.format(self.user, self.server), level='DEBUG')
+        else:
+          log('An error occured: \'{}\'. Re-connecting to \'{}\'.'.format(e, self.server), level='DEBUG')
+
         try:
           total_msgs = self.connect(folder=folder)
         except Exception as e:
@@ -267,42 +285,51 @@ class MailBox(object):
 
     self.isRunning = False
 
+
 def idle(connection):
   socket = None
   connection.loop = False
   connection.tag = None
+  response = b''
+
   try:
     socket = connection.socket()
     connection.tag = connection._new_tag()
-    connection.send(b'{} IDLE\r\n'.format(connection.tag))
+    connection.send(connection.tag + b' IDLE\r\n')
     response = connection.readline().strip()
-    log('Initializing \'{} IDLE\'; Response: \'{}\''.format(connection.tag, response.replace('\r\n', '')), level='DEBUG')
-    if not response.startswith('+'):
-      log('{} IDLE: Unexpected Response'.format(connection.tag), level='ERROR')
-      raise Exception('While initializing IDLE: \'{}\''.format(response.replace('\r\n', '')))
+    log('Initializing \'{} IDLE\'; Response: \'{}\''.format(connection.tag.decode('utf-8'), response.replace(b'\r\n', b'').decode('utf-8')), level='DEBUG')
+    if not response.startswith(b'+'):
+      log('{} IDLE: Unexpected response'.format(connection.tag.decode('utf-8')), level='ERROR')
+      raise Exception('While initializing IDLE: \'{}\''.format(response.replace(b'\r\n', b'').decode('utf-8')))
     socket.settimeout(_socket_timeout_)
     connection.loop = True
     while connection.loop:
       try:
         response = connection.readline().strip()
-        log('{} IDLE; Response: \'{}\''.format(connection.tag, response.replace('\r\n', '')), level='DEBUG')
-        if response.startswith('* OK'):
+        log('{} IDLE; Response: \'{}\''.format(connection.tag.decode('utf-8'), response.replace(b'\r\n', b'').decode('utf-8')), level='DEBUG')
+        if response.startswith(b'* OK'):
           continue
-        if response.startswith('* BYE '):
-          log('{} IDLE: Connection closed'.format(connection.tag), level='DEBUG')
-          raise Exception("Connection closed: \'{}\'".format(response.replace('\r\n', '')))
-        if response.endswith('EXISTS') or response.endswith('EXPUNGE'):
+        if response.startswith(b'* BYE '):
+          log('{} IDLE: Connection closed'.format(connection.tag.decode('utf-8')), level='DEBUG')
+          raise Exception('Connection closed: \'{}\''.format(response.replace(b'\r\n', b'').decode('utf-8')))
+        if response.endswith(b'EXISTS') or response.endswith(b'EXPUNGE'):
           num, message = response.split()[1:3]
           yield num, message
-      except socket_error as e:
+      except (socket_error, OSError) as e:
         if 'timed out' in str(e).lower():
-          log('{} IDLE: Connection timed out'.format(connection.tag), level='DEBUG')
+          log('{} IDLE: Connection timed out'.format(connection.tag.decode('utf-8')), level='DEBUG')
           connection.done()
+        #elif e.errno == errno.ECONNRESET:
+        #  log('{} IDLE: Connection reset by peer'.format(connection.tag.decode('utf-8')), level='DEBUG')
+        #  raise Exception('Connection reset by peer')
         else:
+          log('{} IDLE: Unexpected exception \'{}\' due to socket or OS error in inner loop of function \'idle()\''.format(connection.tag.decode('utf-8')), e, level='DEBUG')
           raise
-      except:
+      except Exception as e:
+        log('{} IDLE: Unexpected exception \'{}\' in inner loop of function \'idle()\''.format(connection.tag.decode('utf-8'), e), level='DEBUG')
         raise
-  except:
+  except Exception as e:
+    log('{} IDLE: Unexpected exception \'{}\' at start of function \'idle()\''.format(connection.tag.decode('utf-8'), e), level='DEBUG')
     raise
 
 
@@ -311,15 +338,17 @@ def done(connection):
   connection.loop = False
   try:
     response = connection.readline().strip()
-    log('Terminating \'{} IDLE\'; Response: \'{}\''.format(connection.tag, response.replace('\r\n', '')), level='DEBUG')
-    if response.startswith('*'):
+    log('Terminating \'{} IDLE\'; Response: \'{}\''.format(connection.tag.decode('utf-8'), response.replace(b'\r\n', b'').decode('utf-8')), level='DEBUG')
+    if response.startswith(b'*'):
       response = connection.readline().strip()
-      log('Terminating \'{} IDLE\'; Response: \'{}\''.format(connection.tag, response.replace('\r\n', '')), level='DEBUG')
-    if not response.startswith('{} OK'.format(connection.tag)):
-      log('{} IDLE: Unexpected Response'.format(connection.tag), level='ERROR')
-      raise Exception('While terminating IDLE: \'{}\''.format(response.replace('\r\n', '')))
-  except:
+      log('Terminating \'{} IDLE\'; Response: \'{}\''.format(connection.tag.decode('utf-8'), response.replace(b'\r\n', b'').decode('utf-8')), level='DEBUG')
+    if not response.startswith(connection.tag + b' OK'):
+      log('{} IDLE: Unexpected Response'.format(connection.tag.decode('utf-8')), level='ERROR')
+      raise Exception('While terminating IDLE: \'{}\''.format(response.replace(b'\r\n', b'').decode('utf-8')))
+  except Exception as e:
+    log('{} IDLE: Unexpected exception \'{}\' in function \'done()\''.format(connection.tag.decode('utf-8'), e), level='DEBUG')
     raise
+
 
 #imaplib.Debug = 4
 imaplib.IMAP4.idle = idle
@@ -364,59 +393,104 @@ def notify(user, sender, subject):
     return
 
   notification_title = '{} {}'.format(_notification_title_, user)
-  notification_text = '{}: {}'.format(sender, subject)
+  notification_text = '{}: {} | {}: {}'.format(_msg_from_, sender, _msg_subject_, subject)
 
   for host in _kodi_['hosts']:
     if host_is_up(host, _kodi_['port']):
-      log('Notfying host {}'.format(host), level='DEBUG')
+      log('Notfying host \'{}\''.format(host), level='DEBUG')
       kodi_request(host, 'GUI.ShowNotification', params={'title': notification_title, 'message': notification_text, 'displaytime': 2000}, port=_kodi_['port'], user=_kodi_['user'], password=_kodi_['passwd'])
     else:
-      log('Host {} is down; Requests canceled'.format(host), level='DEBUG')
+      log('Host \'{}\' is down; Requests canceled'.format(host), level='DEBUG')
 
 
 def show(user, message):
   if not message:
-    return False
+    return
 
   try:
-    from_name, from_address = parseaddr(message['From'])
-    if not from_address:
+    name, address = parseaddr(message['From'])
+    if not address:
       log('Could not parse sender\'s mail address from header', level='ERROR')
-      return False
+      return
 
-    name, encoding = decode_header(from_name)[0]
+    name, encoding = decode_header(name)[0]
     if encoding:
-      from_name = name.decode(encoding).encode('utf-8')
-    else:
-      from_name = name
-  except:
-    from_name = ''
+      name = name.decode(encoding)
+  except Exception as e:
+    log('Error: \'{}\' while extracting sender\'s name and address from header'.format(e), level='ERROR')
+    name = ''
     pass
 
   try:
     line = []
     for subject, encoding in decode_header(message['Subject']):
       if encoding:
-        line.append(subject.decode(encoding).encode('utf-8'))
+        line.append(subject.decode(encoding))
       else:
         line.append(subject)
     subject = ' '.join([l for l in line])
-  except:
+  except Exception as e:
+    log('Error: \'{}\' while extracting subject from header'.format(e), level='ERROR')
     subject = ''
     pass
 
-  if from_name:
-    log('From: {} <{}> | Subject: {}'.format(from_name, from_address, subject))
-    notify(user, from_name, subject)
+  if name:
+    log('From: {} <{}> | Subject: {}'.format(name, address, subject))
+    notify(user, name, subject)
   else:
-    log('From: {} | Subject: {}'.format(from_address, subject))
-    notify(user, from_address, subject)
+    log('From: {} | Subject: {}'.format(address, subject))
+    notify(user, address, subject)
 
-  return True
+
+  if '*' not in _attachments_['from'] and (not bool(name) or name not in _attachments_['from']):
+    return
+
+  dnldFolder = os.path.join(_attachments_['path'], name if name else address)
+
+  try:
+    for part in message.walk():
+      if part.get_content_maintype() == 'multipart':
+        continue
+
+      if part.get('Content-Disposition') is None:
+        continue
+
+      fileName, encoding = decode_header(part.get_filename())[0]
+      if encoding:
+        fileName = fileName.decode(encoding)
+
+      if bool(fileName):
+        fileExt = os.path.splitext(fileName)[1]
+        log('Processing attachment \'{}\''.format(fileName), level='DEBUG')
+
+        if '*' not in _attachments_['type'] and (not bool(fileExt) or fileExt not in _attachments_['type']):
+          log('Attachment type \'{}\' is not configured for download'.format(fileExt), level='DEBUG')
+          return
+
+        filePath = os.path.join(dnldFolder, fileName)
+
+        if not os.path.isfile(filePath):
+          if not os.path.isdir(dnldFolder):
+            try:
+              os.makedirs(dnldFolder)
+            except OSError:
+              log('Creation of download folder \'{}\' failed'.format(dnldFolder), level='ERROR')
+              return
+            else:
+              log('Successfully created download folder \'{}\''.format(dnldFolder), level='DEBUG')
+
+          with open(filePath, 'wb') as fp:
+            fp.write(part.get_payload(decode=True))
+          log('Attachment \’{}\' saved in folder \'{}\'.'.format(fileName, dnldFolder))
+        else:
+          log('Attachment \’{}\' already exists in folder \'{}\'.'.format(fileName, dnldFolder))
+  except Exception as e:
+    log('Unexpected exception: \'{}\' while saving attachment \'{}\''.format(e, fileName), level='ERROR')
+    pass
 
 
 if __name__ == '__main__':
-  global _config_file_, _log_file_, _debug_, _notification_title_, _socket_timeout_
+  global _config_file_, _log_file_, _debug_, _notification_title_, _msg_from_, _msg_subject_, _socket_timeout_
 
   parser = argparse.ArgumentParser(description='Sends a notification to a kodi host when a new email is received')
 
@@ -445,7 +519,9 @@ if __name__ == '__main__':
     sys.exit(1)
 
   log('Configuration: OK', level='DEBUG')
-  log('Notif. Title:  \'{}\''.format(_notification_title_), level='DEBUG')
+  log('Customization: \'New Message for\': \'{}\' | \'From\': \'{}\' | \'Subject\': \'{}\''.format(_notification_title_, _msg_from_, _msg_subject_), level='DEBUG')
+
+  log('Attachments of types \'{}\' sent from \'{}\' will be saved in \'{}\''.format(','.join(_attachments_['type']), ','.join(_attachments_['from']), _attachments_['path']), level='DEBUG')
 
   Failure = False
 

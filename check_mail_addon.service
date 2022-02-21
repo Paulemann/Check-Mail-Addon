@@ -1,0 +1,15 @@
+[Unit]
+Description=Check Mail Service
+After=multi-user.target
+
+[Service]
+Type=idle
+Restart=on-failure
+WorkingDirectory=/home/pi
+ExecStart=/usr/bin/python3 -u /home/pi/check_mail_addon.py
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=check_mail_adddon
+
+[Install]
+WantedBy=multi-user.target
