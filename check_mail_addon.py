@@ -448,6 +448,8 @@ def show(user, message):
   dnldFolder = os.path.join(_attachments_['path'], name if name else address)
 
   try:
+    fileName = ''
+
     for part in message.walk():
       if part.get_content_maintype() == 'multipart':
         continue
@@ -455,7 +457,7 @@ def show(user, message):
       if part.get('Content-Disposition') is None:
         continue
 
-      fileName, encoding = decode_header(part.get_filename())[0]
+      fileName, encoding = decode_header(part.get_filename() or '')[0]
       if encoding:
         fileName = fileName.decode(encoding)
 
@@ -495,6 +497,7 @@ if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Sends a notification to a kodi host when a new email is received')
 
   parser.add_argument('-d', '--debug', dest='debug', action='store_true', help="Output debug messages (Default: False)")
+  parser.add_argument('-u', '--unseen', dest='unseen', action='store_true', help="Show today's unseen messages (Default: False)")
   parser.add_argument('-l', '--logfile', dest='log_file', default=None, help="Path to log file (Default: None=stdout)")
   parser.add_argument('-t', '--timeout', dest='timeout', default=1500, help="Connection Timeout (Default: 1500)")
   parser.add_argument('-c', '--config', dest='config_file', default=os.path.splitext(os.path.basename(__file__))[0] + '.ini', help="Path to config file (Default: <Script Name>.ini)")
@@ -535,14 +538,21 @@ if __name__ == '__main__':
       Failure = True
       break
 
-    # Fetch unread mails only for today:
-    #today = datetime.date.today().strftime("%d-%b-%Y")
-    #uid_list = account['connection'].search('ON', today)
+    if args.unseen:
+      log('Fetching unread messages for \'{}\''.format(account['user']))
+      today = datetime.date.today().strftime("%d-%b-%Y")
+      account['connection'].connect('Inbox')
 
-    #if uid_list:
-    #  for uid in uid_list:
-    #    msg = account['connection'].fetch(uid)
-    #    show(account['user'], msg)
+      # Fetch all unread messages:
+      #uid_list = account['connection'].search(None, '(UNSEEN)')
+
+      # Fetch unread messages only for today:
+      uid_list = account['connection'].search('ON', today)
+
+      if uid_list:
+        for uid in uid_list:
+          msg = account['connection'].fetch(uid)
+          show(account['user'], msg)
 
     account['connection'].monitor(callback=show)
     time.sleep(1)
