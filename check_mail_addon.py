@@ -414,8 +414,9 @@ def show(user, message):
       return
 
     name, encoding = decode_header(name)[0]
-    if encoding:
-      name = name.decode(encoding)
+    if isinstance(name, bytes):
+      name = name.decode(encoding or 'utf-8')
+
   except Exception as e:
     log('Error: \'{}\' while extracting sender\'s name and address from header'.format(e), level='ERROR')
     name = ''
@@ -424,11 +425,11 @@ def show(user, message):
   try:
     line = []
     for subject, encoding in decode_header(message['Subject']):
-      if encoding:
-        line.append(subject.decode(encoding))
-      else:
-        line.append(subject)
-    subject = ' '.join([l for l in line])
+      if isinstance(subject, bytes):
+        subject = subject.decode(encoding or 'utf-8')
+      line.append(subject)
+    #subject = ' '.join([l for l in line])
+    subject = ''.join([l for l in line])
   except Exception as e:
     log('Error: \'{}\' while extracting subject from header'.format(e), level='ERROR')
     subject = ''
@@ -442,7 +443,8 @@ def show(user, message):
     notify(user, address, subject)
 
 
-  if '*' not in _attachments_['from'] and (not bool(name) or name not in _attachments_['from']):
+  #if '*' not in _attachments_['from'] and (not bool(name) or name not in _attachments_['from']):
+  if _attachments_['from'] != ['*'] and (not any(n in name for n in _attachments_['from']) and not any(a in address for a in _attachments_['from'])):
     return
 
   dnldFolder = os.path.join(_attachments_['path'], name if name else address)
@@ -458,8 +460,8 @@ def show(user, message):
         continue
 
       fileName, encoding = decode_header(part.get_filename() or '')[0]
-      if encoding:
-        fileName = fileName.decode(encoding)
+      if isinstance(fileName, bytes):
+        fileName = fileName.decode(encoding or 'utf-8')
 
       if bool(fileName):
         fileExt = os.path.splitext(fileName)[1]
@@ -483,9 +485,9 @@ def show(user, message):
 
           with open(filePath, 'wb') as fp:
             fp.write(part.get_payload(decode=True))
-          log('Attachment \’{}\' saved in folder \'{}\'.'.format(fileName, dnldFolder))
+          log('Attachment \'{}\' saved in folder \'{}\''.format(fileName, dnldFolder))
         else:
-          log('Attachment \’{}\' already exists in folder \'{}\'.'.format(fileName, dnldFolder))
+          log('Attachment \'{}\' already exists in folder \'{}\''.format(fileName, dnldFolder))
   except Exception as e:
     log('Unexpected exception: \'{}\' while saving attachment \'{}\''.format(e, fileName), level='ERROR')
     pass
