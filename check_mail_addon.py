@@ -429,7 +429,7 @@ def show(user, message):
         subject = subject.decode(encoding or 'utf-8')
       line.append(subject)
     #subject = ' '.join([l for l in line])
-    subject = ''.join([l for l in line])
+    subject = ''.join([l.replace('\r\n', '') for l in line])
   except Exception as e:
     log('Error: \'{}\' while extracting subject from header'.format(e), level='ERROR')
     subject = ''
