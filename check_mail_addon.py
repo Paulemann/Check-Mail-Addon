@@ -122,8 +122,8 @@ def read_config():
       return False
 
     _attachments_['path'] = config.get('Attachments', 'path')
-    _attachments_['type'] = [p.strip(' "\'') for p in config.get('Attachments', 'type').split(',')]
-    _attachments_['from'] = [p.strip(' "\'') for p in config.get('Attachments', 'from').split(',')]
+    _attachments_['type'] = [p.strip(' "\'').lower() for p in config.get('Attachments', 'type').split(',')]
+    _attachments_['from'] = [p.strip(' "\'').lower() for p in config.get('Attachments', 'from').split(',')]
 
     for account in _accounts_:
       account['server'] = config.get(account['name'], 'server')
@@ -444,7 +444,7 @@ def show(user, message):
 
 
   #if '*' not in _attachments_['from'] and (not bool(name) or name not in _attachments_['from']):
-  if _attachments_['from'] != ['*'] and (not any(n in name for n in _attachments_['from']) and not any(a in address for a in _attachments_['from'])):
+  if _attachments_['from'] != ['*'] and (not any(n in name.lower() for n in _attachments_['from']) and not any(a in address.lower() for a in _attachments_['from'])):
     return
 
   dnldFolder = os.path.join(_attachments_['path'], name if name else address)
@@ -464,10 +464,11 @@ def show(user, message):
         fileName = fileName.decode(encoding or 'utf-8')
 
       if bool(fileName):
-        fileExt = os.path.splitext(fileName)[1]
+        fileExt = os.path.splitext(fileName)[-1]
         log('Processing attachment \'{}\''.format(fileName), level='DEBUG')
 
-        if '*' not in _attachments_['type'] and (not bool(fileExt) or fileExt not in _attachments_['type']):
+        #if '*' not in _attachments_['type'] and (not bool(fileExt) or fileExt.lower() not in _attachments_['type']):
+        if _attachments_['type'] != ['*'] and not any(e in fileExt.lower() for e in _attachments_['type']):
           log('Attachment type \'{}\' is not configured for download'.format(fileExt), level='DEBUG')
           return
 
@@ -519,14 +520,15 @@ if __name__ == '__main__':
   log('Conn. Timeout: {}'.format(_socket_timeout_), level='DEBUG')
   log('Config. File:  {}'.format(_config_file_), level='DEBUG')
 
-  log('Reading configuration from file ...', level='DEBUG')
+  log('Reading configuration ...', level='DEBUG')
   if not read_config():
     sys.exit(1)
 
   log('Configuration: OK', level='DEBUG')
+  log('Accounts:      {}'.format(', '.join([account['name'] for account in _accounts_])), level='DEBUG')
   log('Customization: \'New Message for\': \'{}\' | \'From\': \'{}\' | \'Subject\': \'{}\''.format(_notification_title_, _msg_from_, _msg_subject_), level='DEBUG')
 
-  log('Attachments of types \'{}\' sent from \'{}\' will be saved in \'{}\''.format(','.join(_attachments_['type']), ','.join(_attachments_['from']), _attachments_['path']), level='DEBUG')
+  log('Attachments of types \'{}\' sent from \'{}\' will be saved in \'{}\''.format(', '.join(_attachments_['type']), ', '.join(_attachments_['from']), _attachments_['path']), level='DEBUG')
 
   Failure = False
 
