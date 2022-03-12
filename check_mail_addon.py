@@ -345,11 +345,11 @@ def idle(connection):
     connection.send(connection.tag + b' IDLE\r\n')
 
     response = connection.readline().strip()
-    log('{} IDLE; Response: \'{}\''.format(connection.tag.decode('utf-8'), response.replace(b'\r\n', b'').decode('utf-8')), level='DEBUG')
 
     if response.startswith(b'+'):
-      log('IDLE started', level='DEBUG')
+      log('{} IDLE started'.format(connection.tag.decode('utf-8')), level='DEBUG')
     else:
+      log('{} IDLE; Response: \'{}\''.format(connection.tag.decode('utf-8'), response.replace(b'\r\n', b'').decode('utf-8')), level='DEBUG')
       raise Exception('Failed to IDLE')
 
     connection.loop = True
@@ -383,12 +383,10 @@ def done(connection):
   connection.loop = False
   try:
     response = connection.readline().strip()
-    log('{} DONE; Response: \'{}\''.format(connection.tag.decode('utf-8'), response.replace(b'\r\n', b'').decode('utf-8')), level='DEBUG')
     if response.startswith(b'*'):
       response = connection.readline().strip()
-      log('{} DONE; Response: \'{}\''.format(connection.tag.decode('utf-8'), response.replace(b'\r\n', b'').decode('utf-8')), level='DEBUG')
     if response.split(maxsplit=2)[1] == b'OK':
-      log('IDLE completed', level='DEBUG')
+      log('{} IDLE completed'.format(connection.tag.decode('utf-8')), level='DEBUG')
   except:
     pass
 
@@ -521,7 +519,7 @@ def show(user, message):
 
         if _attachments_['type'] != ['*'] and not any(e in fileExt.lower() for e in _attachments_['type']):
           log('Attachment type \'{}\' is not configured for download'.format(fileExt), level='DEBUG')
-          return
+          continue
 
         filePath = os.path.join(dnldFolder, fileName)
 
