@@ -55,6 +55,12 @@ class IDLE_TIMEOUT(Exception):
 class IDLE_COMPLETE(Exception):
   pass
 
+class IMAP_CONNECT_ERROR(Exception):
+  pass
+
+class IMAP_AUTH_ERROR(Exception):
+  pass
+
 
 def generate_xoauth2(username, access_token, base64_encode=False):
     auth_string = 'user={}\1auth=Bearer {}\1\1'.format(username, access_token)
@@ -65,6 +71,7 @@ def generate_xoauth2(username, access_token, base64_encode=False):
 
 
 def device_auth_initiate(client_id, tenant_id):
+  # See: https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-device-code
   data = {
     'scope': SCOPE,
     'client_id': client_id
@@ -72,11 +79,16 @@ def device_auth_initiate(client_id, tenant_id):
 
   r = requests.post('{}/{}/oauth2/v2.0/devicecode'.format(AUTH_URL, tenant_id), data=data)
   response = r.json()
-  log(response.get('message'), level='INFO')
+  message = response.get('message')
+  log(message, level='INFO')
+
+  user_code = response.get('user_code')
+  verification_uri = response.get('verification_uri')
+  expires_in = response.get('expires_in')
 
   for host in _kodi_['host']:
     if host_is_up(host, _kodi_['port']):
-      kodi_request(host, 'GUI.ShowNotification', params={'title': 'Authentication required', 'message': response.get('message'), 'displaytime': 2000}, port=_kodi_['port'], user=_kodi_['user'], password=_kodi_['password'])
+      kodi_request(host, 'GUI.ShowNotification', params={'title': 'Device authorization required', 'message': message, 'displaytime': 2000}, port=_kodi_['port'], user=_kodi_['user'], password=_kodi_['password'])
 
   return response.get('device_code')
 
@@ -84,7 +96,7 @@ def device_auth_initiate(client_id, tenant_id):
 def device_auth_acquire(device_code, client_id, tenant_id):
   data = {
     'grant_type': 'urn:ietf:params:oauth:grant-type:device_code',
-    'code': device_code,
+    'device_code': device_code,  #'code':  device_code
     'client_id': client_id
   }
   retries = 0
@@ -490,28 +502,16 @@ class MailBox(object):
     return None
 
   def connect(self):
+    if self.ssl:
+      if not self.port:
+        self.port = 993
+    else:
+      if not self.port:
+        self.port = 143
+
     try:
-      if self.ssl:
-        if not self.port:
-          self.port = 993
-        self.imap = imaplib.IMAP4_SSL(self.server, self.port)
-      else:
-        if not self.port:
-          self.port = 143
-        self.imap = imaplib.IMAP4(self.server, self.port)
-
-    except Exception as e:
-      log(' - Connection to \'{}:{}\' failed with error \'{}\''.format(self.server, self.port, e), level='DEBUG')
-      raise Exception('Connection failure')
-
-    log(' - Connected to \'{}\''.format(self.server), level='DEBUG')
-    try:
-      if self.authmethod != 'oauth2':
-        log(' - Login attempt using user and password ...', level='DEBUG')
-        self.imap.login(self.user, self.password)
-
-      else:
-        log(' - Login attempt using method \'oauth2\' ...', level='DEBUG')
+      if self.authmethod == 'oauth2':
+        log(' - Login attempt with method \'oauth2\' ...', level='DEBUG')
 
         if self.refresh_token:
           log(' - Refreshing access token ...', level='DEBUG')
@@ -526,14 +526,31 @@ class MailBox(object):
           self.refresh_token = refresh_token
           save_token(self.user, self.refresh_token)
 
+      if self.ssl:
+        self.imap = imaplib.IMAP4_SSL(self.server, self.port)
+      else:
+        self.imap = imaplib.IMAP4(self.server, self.port)
+
+      log(' - Connected to \'{}\''.format(self.server), level='DEBUG')
+
+      #self.imap.debug = 10 # 4
+
+      if self.authmethod == 'oauth2':
         auth_string = generate_xoauth2(self.user, access_token)
 
-        #self.imap.debug = 10 # 4
         self.imap.authenticate('XOAUTH2', lambda x: auth_string.encode())
+
+      else:
+        log(' - Login attempt with username and password ...', level='DEBUG')
+        self.imap.login(self.user, self.password)
+
+    except socket.error as e:
+      log(' - Connection to \'{}:{}\' failed with error \'{}\''.format(self.server, self.port, e), level='DEBUG')
+      raise IMAP_CONNECT_ERROR(e)
 
     except Exception as e:
       log(' - Login of user \'{}\' failed with error \'{}\''.format(self.user, e), level='DEBUG')
-      raise Exception('Authentication failure')
+      raise IMAP_AUTH_ERROR(e)
 
     log(' - Mailbox user \'{}\' logged in'.format(self.user), level='DEBUG')
 
