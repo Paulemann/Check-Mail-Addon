@@ -118,7 +118,7 @@ class Database(object):
     self.connection = sqlite3.connect(path_to_db)
     self.cursor = self.connection.cursor()
 
-    log('Creating database in \'{}\' ...'.format(path_to_db), level='DEBUG')
+    log('Creating database in {} ...'.format(path_to_db), level='DEBUG')
     self.create()
 
   def create(self):
@@ -230,7 +230,7 @@ def save_value(section, option, value):
     config.read([os.path.abspath(CONFIG_FILE)])
 
     if not config.has_section(section):
-      log(' - There\'s no section \'{} \' in file \'{}\''.format(section, CONFIG_FILE), level='ERROR')
+      log(' - There\'s no section [{}] in file {}'.format(section, CONFIG_FILE), level='ERROR')
       return False
 
     config.set(section, option, value)
@@ -239,10 +239,10 @@ def save_value(section, option, value):
       config.write(configfile, space_around_delimiters=True)
 
   except Exception as e:
-    log(' - Failed to update option \'{}\' in section \'{}\' of file \'{}\': {}'.format(option, section, CONFIG_FILE, e), level='ERROR')
+    log(' - Updating option "{}" in section [{}] of file {} failed: {}'.format(option, section, CONFIG_FILE, e), level='ERROR')
     return False
 
-  log(' - Successfully updated option \'{}\' in section \'{}\' of file \'{}\''.format(option, section, CONFIG_FILE), level='DEBUG')
+  log(' - Option "{}" in section [{}] of file {} updated'.format(option, section, CONFIG_FILE), level='DEBUG')
   return True
 
 
@@ -306,7 +306,7 @@ def read_section(config, section, options, my_dict):
         my_dict[key] = value.get('default', None)
 
     if value.get('mandatory') and not my_dict[key]:
-      log('Missing mandatory config value: section: {}, option: {}'. format(section, key), level='ERROR')
+      log('Missing mandatory config value; section: [{}], option: {}'. format(section, key), level='ERROR')
       raise Exception('Missing value')
 
     if value.get('test') and my_dict[key]:
@@ -317,7 +317,7 @@ def read_section(config, section, options, my_dict):
 
       for element in test:
         if element and not value['test'](element):
-          log('Invalid config value: section: {}, option: {}, value: {}'. format(section, key, config.get(section, key)), level='ERROR')
+          log('Invalid config value; section: [{}], option: {}, value: {}'. format(section, key, config.get(section, key)), level='ERROR')
           raise Exception('Invalid value')
 
 
@@ -325,7 +325,7 @@ def read_config():
   global KODI, ACCOUNTS, ATTACHMENTS, LOCALE, MAILER, OAUTH2
 
   if not os.path.exists(CONFIG_FILE):
-    log('Missíng configuration file \'{}\''.format(CONFIG_FILE), level='ERROR')
+    log('Missíng configuration file {}'.format(CONFIG_FILE), level='ERROR')
     raise Exception('Missing config file')
 
   try:
@@ -335,7 +335,7 @@ def read_config():
     ACCOUNTS = []
     for section_name in config.sections():
       if is_mailaddress(section_name):
-        account = {'name': section_name}
+        account = {'name': section_name.strip()}
         ACCOUNTS.append(account)
         #ACCOUNTS.append({'name': section_name})
 
@@ -414,10 +414,10 @@ def read_config():
             account['oauth2_parms']['callback'] = device_auth_get
 
     if SMTP:
-      log('SMTP data found. Messages for OAuth2 authorization will be sent.', level='DEBUG')
+      log(' - SMTP data found', level='DEBUG')
       MAILER = Mailer(SMTP[0]['smtp_host'], SMTP[0]['smtp_port'], SMTP[0]['user'], SMTP[0]['password'])
     else:
-      log('Without SMTP data, messages for OAuth2 authorization cannot be sent.', level='DEBUG')
+      log(' - No SMTP data', level='DEBUG')
       MAILER = None
 
   except:
@@ -445,10 +445,10 @@ class MailBox(object):
     #self.redirect_uri  = oauth2_parms.get('redirect_uri', '')
 
     if updated:
-      log(' - Last message was received on {}'.format(updated.strftime('%B %-d, %Y at %-H:%M')), level='DEBUG')
+      log(' - Last message received on {}'.format(updated.strftime('%B %-d, %Y at %-H:%M')), level='DEBUG')
       self.updated = updated
     else:
-      log(' - Date of the last received message is unknown', level='DEBUG')
+      log(' - Date of last received message is unknown', level='DEBUG')
       self.updated = datetime.now().replace(second=0, microsecond=0)
 
     try:
@@ -498,7 +498,6 @@ class MailBox(object):
     #status, data = self.imap.uid('fetch', uid, '(RFC822)')
     status, data = self.imap.uid('fetch', uid, '(BODY.PEEK[])')
     if status == 'OK' and data[0]:
-      #email_msg = email.message_from_string(data[0][1].decode('utf-8'))
       email_msg = email.message_from_bytes(data[0][1])
       return email_msg
     else:
@@ -522,14 +521,14 @@ class MailBox(object):
 
     try:
       if hasattr(self, 'client_id'): # and self.client_id: #if hasattr(self, 'oauth2_parms'):
-        log(' - Login attempt with method \'oauth2\' ...', level='DEBUG')
+        log(' - Auth. method: OAuth2', level='DEBUG')
 
         if self.refresh_token: #if self.oauth2_parms.get('refresh_token'):
-          log(' - Refreshing access token ...', level='DEBUG')
+          log(' - Requesting access token (with existing refresh token)', level='DEBUG')
           access_token, refresh_token = auth_refresh(self.client_id, self.client_secret, self.refresh_token, tenant_id=self.tenant_id)
 
         elif self.redirect_uri: #if self.oauth2_parms.get('redirect_uri'):
-          log(' - Requesting access token (application authorization) ...', level='DEBUG')
+          log(' - Requesting access token (application authorization required)', level='DEBUG')
 
           if not self.callback:
             raise Exception('OAuth2 callback not set')
@@ -541,7 +540,7 @@ class MailBox(object):
             raise Exception('No OAuth2 authorization code')
 
         else:
-          log(' - Requesting access token (device authorization) ...', level='DEBUG')
+          log(' - Requesting access token (device authorization required)', level='DEBUG')
 
           if not self.callback:
             raise Exception('OAuth2 callback not set')
@@ -553,16 +552,19 @@ class MailBox(object):
             raise Exception('No OAuth2 device code')
 
         if refresh_token:
-          log(' - Saving refresh token ...', level='DEBUG')
+          log(' - New refresh token received', level='DEBUG')
           self.refresh_token = refresh_token
           save_token(self.user, self.refresh_token)
+
+      else:
+        log(' - Auth. method: username, password', level='DEBUG')
 
       if self.ssl:
         self.imap = imaplib.IMAP4_SSL(self.server, self.port)
       else:
         self.imap = imaplib.IMAP4(self.server, self.port)
 
-      log(' - Connected to \'{}\''.format(self.server), level='DEBUG')
+      log(' - Connected to {}'.format(self.server), level='DEBUG')
 
       #self.imap.debug = 10 # 4
 
@@ -572,34 +574,33 @@ class MailBox(object):
         self.imap.authenticate('XOAUTH2', lambda x: auth_string.encode())
 
       elif self.password:
-        log(' - Login attempt with username and password ...', level='DEBUG')
         self.imap.login(self.user, self.password)
 
       else:
          raise Exception('Insufficient login/auth data')
 
     except socket_error as e:
-      log(' - Connection to \'{}:{}\' failed with error \'{}\''.format(self.server, self.port, e_decode(e)), level='DEBUG')
+      log(' - Connection to {}:{} failed: {}'.format(self.server, self.port, e_decode(e)), level='DEBUG')
       raise IMAP_CONNECT_ERROR(e_decode(e))
 
     except Exception as e:
-      log(' - Login of user \'{}\' failed with error \'{}\''.format(self.user, e_decode(e)), level='DEBUG')
+      log(' - Login of user {} failed: {}'.format(self.user, e_decode(e)), level='DEBUG')
       raise IMAP_AUTH_ERROR(e_decode(e))
 
-    log(' - Mailbox user \'{}\' logged in'.format(self.user), level='DEBUG')
+    log(' - User {} logged in'.format(self.user), level='DEBUG')
 
   def select(self, folder):
     if folder:
       status, data = self.imap.select(folder, readonly=True)
       if status == 'OK':
-        log(' - Mailbox folder \'{}\' selected: {} messages'.format(folder, int(data[0])), level='DEBUG')
+        log(' - {}: {} messages'.format(folder, int(data[0])), level='DEBUG')
         return int(data[0])
       else:
-        log(' - Selection of mailbox folder \'{}\' failed'.format(folder), level='DEBUG')
-        raise Exception('Mailbox failure')
+        log(' - Selection of {} failed'.format(folder), level='DEBUG')
+        raise Exception('Mailbox folder selection failed')
     else:
-      log(' - Mailbox folder not specified', level='DEBUG')
-      raise Exception('Mailbox not specified')
+      log(' - Mailbox folder unnamed', level='DEBUG')
+      raise Exception('Mailbox folder unnamed')
 
   def reconnect(self):
     try:
@@ -644,7 +645,7 @@ class MailBox(object):
     try:
       total_msgs = self.select(folder)
     except Exception as e:
-      log('A fatal error occured: \'{}\'. Abort.'.format(e), level='ERROR')
+      log('A fatal error occured: {}. Abort.'.format(e), level='ERROR')
       return
 
     if catchup:
@@ -678,7 +679,7 @@ class MailBox(object):
       try:
         for num, msg in self.imap.idle(timeout=IDLE_TIMEOUT, debug=debug):
           if msg == b'EXISTS':
-            log('Size of \'{}\' has changed. {} messages (current) --> {} messages (new)'.format(folder, total_msgs, int(num)), level='DEBUG')
+            log('Size of {} has changed. {} messages (current) --> {} messages (new)'.format(folder, total_msgs, int(num)), level='DEBUG')
             counter = int(num)
             if counter > total_msgs:
               new_msg = True
@@ -686,17 +687,17 @@ class MailBox(object):
               continue
 
             total_msgs = counter
-            log('Size of \'{}\' updated: {} messages'.format(folder, total_msgs), level='DEBUG')
+            log('Size of {} updated: {} messages'.format(folder, total_msgs), level='DEBUG')
 
       except IDLE_COMPLETE:
         if new_msg:
           evaluate(total_msgs, counter, callback)
           total_msgs = counter
-          log('Size of \'{}\' updated: {} messages'.format(folder, total_msgs), level='DEBUG')
+          log('Size of {} updated: {} messages'.format(folder, total_msgs), level='DEBUG')
         log('Restarting IDLE ...', level='DEBUG')
 
       except Exception as e:
-        log('Error: \'{}\'. Reconnecting to \'{}\' ...'.format(e, self.server), level='ERROR')
+        log('Error: {}. Reconnecting to \'{}\' ...'.format(e, self.server), level='ERROR')
         try:
           self.reconnect()
           counter = self.select(folder)
@@ -704,7 +705,7 @@ class MailBox(object):
             evaluate(total_msgs, counter, callback)
           total_msgs = counter
         except Exception as e:
-          log('A fatal error occured: \'{}\'. Abort.'.format(e), level='ERROR')
+          log('A fatal error occured: {}. Abort.'.format(e), level='ERROR')
           break
 
     self.isRunning = False
@@ -761,10 +762,10 @@ def notify(user, sender, subject):
 
   for host in KODI['host']:
     if host_is_up(host, KODI['port']):
-      log('Notfying host \'{}\''.format(host), level='DEBUG')
+      log('Notfying host {}'.format(host), level='DEBUG')
       kodi_request(host, 'GUI.ShowNotification', params={'title': notification_title, 'message': notification_text, 'displaytime': 2000}, port=KODI['port'], user=KODI['user'], password=KODI['password'])
     else:
-      log('KODI host \'{}\' is down; Skip sending notification'.format(host), level='DEBUG')
+      log('KODI host {} is down; Skip sending notification'.format(host), level='DEBUG')
 
 
 def decode_safely(s, charset='ascii'):
@@ -800,47 +801,28 @@ def show(user, message):
   if not message:
     return
 
-  msg = {
-    'from': [],
-    'replyto': [],
-    'to': [],
-    'cc': [],
-    'subject': '',
-    'sent': '',
-    'rcvd': '',
-    'text': '',
-    'html': '',
-    'attach': []
-  }
-
   try:
-    msg['from']    = getmailaddresses(message, 'from')
-    msg['replyto'] = getmailaddresses(message, 'reply-to')
-    msg['to']      = getmailaddresses(message, 'to')
-    msg['cc']      = getmailaddresses(message, 'cc')
-
-    #msg['subject'] = decode_rfc2047_header(message['Subject'].replace('\r\n', ''))
-    msg['subject'] = message['Subject']
-    msg['subject'] = ''.join(msg['subject'].split('\r\n'))
-    msg['subject'] = decode_rfc2047_header(msg['subject'])
-
-    msg['sent'] = message['date']
-    msg['sent'] = ''.join(msg['sent'].split('\r\n'))
-    msg['sent'] = datetime.fromtimestamp(mktime_tz(parsedate_tz(msg['sent'])))
+    msg = {
+      'from':    ', '.join('{} <{}>'.format(n, a) for n, a in getmailaddresses(message, 'from')),
+      'replyto': ', '.join('{} <{}>'.format(n, a) for n, a in getmailaddresses(message, 'reply-to')),
+      'to':      ', '.join('{} <{}>'.format(n, a) for n, a in getmailaddresses(message, 'to')),
+      'cc':      ', '.join('{} <{}>'.format(n, a) for n, a in getmailaddresses(message, 'cc')),
+      'subject': decode_rfc2047_header(''.join(message['Subject'].split('\r\n'))),
+      'sent':    datetime.fromtimestamp(mktime_tz(parsedate_tz(''.join(message['date'].split('\r\n'))))).strftime(TIME_FMT),
+      'attach': []
+    }
 
     try:
-      msg['rcvd'] = message['received'].split(';')[-1].strip()
-      msg['rcvd'] = ''.join(msg['rcvd'].split('\r\n'))
+      msg['rcvd'] = ''.join(message['received'].split(';')[-1].strip().split('\r\n'))
     except:
       msg['rcvd'] = datetime.now().astimezone().strftime("%a, %d %b %Y %H:%M:%S %z")
-    msg['rcvd'] = datetime.fromtimestamp(mktime_tz(parsedate_tz(msg['rcvd'])))
+    msg['rcvd'] = datetime.fromtimestamp(mktime_tz(parsedate_tz(msg['rcvd']))).strftime(TIME_FMT)
 
   except Exception as e:
-    log('Error: \'{}\' while processing data from message header'.format(e), level='ERROR')
+    log('Error while processing message header: {}'.format(e), level='ERROR')
     return
 
-  #from_name, from_address = parseaddr(message['From'])
-  from_name, from_address = msg['from'][0]
+  from_name, from_address = (x.strip('<>') for x in msg['from'].split(',')[0].rsplit(maxsplit=1))
   if not from_address:
     log('Could not parse sender\'s mail address from header', level='ERROR')
     return
@@ -848,61 +830,57 @@ def show(user, message):
   notify(user, from_name if from_name else from_address, msg['subject'])
 
   log('New Message:')
-  log('================================================================================')
-  log('From: {}'.format(', '.join('{} <{}>'.format(n, a) for n, a in msg['from'])))
-  if msg['replyto']:
-    log('Reply-to: {}'.format(', '.join('{} <{}>'.format(n, a) for n, a in msg['replyto'])))
-  log('To: {}'.format(', '.join('{} <{}>'.format(n, a) for n, a in msg['to'])))
-  if msg['cc']:
-    log('Cc: {}'.format(', '.join('{} <{}>'.format(n, a) for n, a in msg['cc'])))
-  log('Sent: {}'.format(msg['sent'].strftime(TIME_FMT)))
-  log('Received: {}'.format(msg['rcvd'].strftime(TIME_FMT)))
-  log('Subject: {}'.format(msg['subject']))
-  log('================================================================================')
 
-  try:
-    fileName = ''
+  fileName = ''
 
-    for part in message.walk():
-      log('Content-Type:        {}'.format(part.get_content_type()), level='DEBUG')
-      log('Content-Disposition: {}'.format(part.get('Content-Disposition')), level='DEBUG')
+  for part in message.walk():
+    log('Content-Type:        {}'.format(part.get_content_type()), level='DEBUG')
+    log('Content-Disposition: {}'.format(part.get('Content-Disposition')), level='DEBUG')
 
-      if part.get_content_maintype() == 'multipart':
-        continue
+    if part.get_content_maintype() == 'multipart':
+      continue
 
+    try:
       if part.get('Content-Disposition') is None or 'attachment' not in part.get('Content-Disposition'):
         if part.get_content_type() == 'text/plain':
           charset = part.get_content_charset('iso-8859-1')
           msg['text'] = part.get_payload(decode=True).decode(charset, 'replace')
-          log('Mesagge has text body of {} bytes'.format(len(msg['text'])), level='DEBUG')
+          log('Message text body: {} bytes'.format(len(msg['text'])), level='DEBUG')
+
         if part.get_content_type() == 'text/html':
           charset = part.get_content_charset('iso-8859-1')
           msg['html'] = part.get_payload(decode=True).decode(charset, 'replace') #.decode('raw-unicode-escape')
-          log('Mesagge has html body of {} bytes'.format(len(msg['html'])), level='DEBUG')
-          if not msg['text']:
+          log('Message html body: {} bytes'.format(len(msg['html'])), level='DEBUG')
+          if not msg.get('text'):
             msg['text'] = html2text(msg['html'])
-            log('Mesagge has text body converted from html body of {} bytes'.format(len(msg['text'])), level='DEBUG')
-        #if 'filename' not in part.get('Content-Disposition'):
+            log('Message text body: {} bytes (converted from html)'.format(len(msg['text'])), level='DEBUG')
+
         continue
 
+    except Exception as e:
+      log('Unexpected error while processing message part {}: {}'.format(part.get_content_type(), e), level='ERROR')
+      #break
+      continue
+
+    try:
       fileName, charset = decode_header(part.get_filename() or '')[0]
       if isinstance(fileName, bytes):
         fileName = fileName.decode(charset or 'ascii')
 
       if bool(fileName):
         fileExt = os.path.splitext(fileName)[-1]
-        log('Processing attachment \'{}\''.format(fileName), level='DEBUG')
+        log('Processing attachment {}'.format(fileName), level='DEBUG')
 
         msg['attach'].append(fileName)
 
         if ATTACHMENTS['from'] != ['*'] and (not any(n in from_name.lower() for n in ATTACHMENTS['from']) and not any(a in from_address.lower() for a in ATTACHMENTS['from'])):
-          log('Attachment sender \'{} ({})\' is not configured for download'.format(from_name or 'unknown', from_address), level='DEBUG')
+          log('Not processing attachements sent from "{} ({})"'.format(from_name or 'unknown', from_address), level='DEBUG')
           break
 
         dnldFolder = os.path.join(ATTACHMENTS['path'], from_name if from_name else from_address)
 
         if ATTACHMENTS['type'] != ['*'] and not any(e in fileExt.lower() for e in ATTACHMENTS['type']):
-          log('Attachment type \'{}\' is not configured for download'.format(fileExt), level='DEBUG')
+          log('Not processing attachments of type "{}"'.format(fileExt), level='DEBUG')
           continue
 
         filePath = os.path.join(dnldFolder, fileName)
@@ -912,30 +890,38 @@ def show(user, message):
             try:
               os.makedirs(dnldFolder)
             except OSError:
-              log('Error: Creation of download folder \'{}\' failed'.format(dnldFolder), level='ERROR')
+              log('Error: Creation of download folder {} failed'.format(dnldFolder), level='ERROR')
               return
             else:
-              log('Successfully created download folder \'{}\''.format(dnldFolder), level='DEBUG')
+              log('Successfully created download folder {}'.format(dnldFolder), level='DEBUG')
 
           with open(filePath, 'wb') as fp:
             fp.write(part.get_payload(decode=True))
-          log('Attachment \'{}\' saved in folder \'{}\''.format(fileName, dnldFolder))
+          log('Attachment {} saved in folder {}'.format(fileName, dnldFolder), level='DEBUG')
         else:
-          log('Attachment \'{}\' already exists in folder \'{}\''.format(fileName, dnldFolder))
+          log('Attachment {} already exists in folder {}'.format(fileName, dnldFolder), level='DEBUG')
 
-    msg['from']    = ', '.join('{} <{}>'.format(n, a) for n, a in msg['from'])
-    msg['replyto'] = ', '.join('{} <{}>'.format(n, a) for n, a in msg['replyto'])
-    msg['to']      = ', '.join('{} <{}>'.format(n, a) for n, a in msg['to'])
-    msg['cc']      = ', '.join('{} <{}>'.format(n, a) for n, a in msg['cc'])
-    msg['sent']    = msg['sent'].strftime(TIME_FMT)
-    msg['rcvd']    = msg['rcvd'].strftime(TIME_FMT)
-    msg['attach']  = ', '.join(msg['attach'])
+    except Exception as e:
+      log('Unexpected error while processing attachment {}: {}'.format(fileName, e), level='ERROR')
+      continue
 
-    #mydb.save([msg])
+  msg['attach']  = ', '.join(msg['attach'])
 
-  except Exception as e:
-    log('Unexpected exception: \'{}\' while saving attachment \'{}\''.format(e, fileName), level='ERROR')
-    pass
+  log('================================================================================')
+  log('From:        {}'.format(msg['from']))
+  if msg['replyto']:
+    log('Reply-to:    {}'.format(msg['replyto']))
+  log('To:          {}'.format(msg['to']))
+  if msg['cc']:
+    log('Cc:          {}'.format(msg['cc']))
+  log('Sent:        {}'.format(msg['sent']))
+  log('Received:    {}'.format(msg['rcvd']))
+  log('Subject:     {}'.format(msg['subject']))
+  if msg['attach']:
+    log('Attachments: {}'.format(msg['attach']))
+  log('================================================================================')
+
+  #mydb.save([msg])
 
 
 if __name__ == '__main__':
@@ -971,41 +957,38 @@ if __name__ == '__main__':
     log('Reading configuration from file {} ...'.format(CONFIG_FILE), level='DEBUG')
     read_config()
   except Exception as e:
-    log('Configuration failed with error: \'{}\'. Abort'.format(e), level='ERROR')
+    log('Configuration failed with error: {}. Abort'.format(e), level='ERROR')
     sys.exit(1)
 
   log(' - Configuration successful', level='DEBUG')
   log(' - Accounts:      {}'.format(', '.join([account['name'] for account in ACCOUNTS])), level='DEBUG')
-  log(' - Attachments of types \'{}\' sent from \'{}\' will be saved in \'{}\''.format(', '.join(ATTACHMENTS['type']), ', '.join(ATTACHMENTS['from']), ATTACHMENTS['path']), level='DEBUG')
+  log(' - Attachments of types {} sent from {} will be saved in {}'.format(', '.join(ATTACHMENTS['type']), ', '.join(ATTACHMENTS['from']), ATTACHMENTS['path']), level='DEBUG')
 
   #mydb = Database(DB_FILE)
 
   for account in ACCOUNTS:
-    log('Processing mail account \'{}\' ...'.format(account['name']), level='DEBUG')
+    log('Processing mail account {} ...'.format(account['name']), level='DEBUG')
     try:
       account['connection'] = MailBox(account['imap_host'], account['user'], account['password'], port=account['imap_port'], ssl=account['imap_ssl'], updated=account['updated'], **account['oauth2_parms'])
     except Exception as e:
-      log(' - An error occured while initializing account \'{}\': \'{}\'. Skip.'.format(account['name'], e), level='ERROR')
+      log(' - An error occured while initializing account {}: {}. Skip.'.format(account['name'], e), level='ERROR')
       continue
 
     account['connection'].monitor('Inbox', callback=show, catchup=args.update)
     sleep(1)
 
-  Failure = False
-
-  while(not Failure):
+  while(True):
     try:
       # Check if processes are still alive:
       for account in ACCOUNTS:
         if 'connection' in account and not account['connection'].is_idle():
-          log('Idle process appears to be dead. Reconnecting to \'{}\'.'.format(account['imap_host']), level='DEBUG')
+          log('Mailbox disconnected. Reconnecting to {} ...'.format(account['imap_host']), level='DEBUG')
           try:
             account['connection'].connect()
           except Exception as e:
-            log('A fatal error occured while updating account \'{}\': \'{}\'. Abort.'.format(account['name'], e), level='ERROR')
-            #raise
-            Failure = True
-            break
+            raise
+            #log('A fatal error occured while updating account {}: {}. Abort.'.format(account['name'], e), level='ERROR')
+            #break
           account['connection'].monitor('Inbox', callback=show)
         sleep(1)
 
@@ -1017,11 +1000,9 @@ if __name__ == '__main__':
 
     # Handle any unexpected error:
     except Exception as e:
-      log('An unexpected error occured: \'{}\'. Abort.'.format(e), level='ERROR')
+      log('An unexpected error occured: {}. Abort.'.format(e), level='ERROR')
       break
 
   for account in ACCOUNTS:
     if 'connection' in account:
       account['connection'].close()
-
-  sys.exit(1 if Failure else 0)
