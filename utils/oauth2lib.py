@@ -114,6 +114,10 @@ AUTH_HTML = """\
 """
 
 
+class OAUTH2_TOKEN_ERROR(Exception):
+  pass
+
+
 class Mailer():
   def __init__(self, server, port, user, password):
     self.server = server
@@ -128,7 +132,10 @@ class Mailer():
 
     message = MIMEMultipart('alternative')
     message['From'] = self.user
-    message['To'] = send_to
+    if isinstance(send_to, list):
+      message['To'] = ', '.join(send_to)
+    else:
+      message['To'] = send_to
     message['Subject'] = subject
 
     # Add HTML/plain-text parts to MIMEMultipart message
@@ -219,8 +226,6 @@ def generate_xoauth2(username, access_token, base64_encode=False):
 
 
 def auth_refresh(client_id, client_secret, refresh_token, tenant_id=None):
-  access_token = None
-
   data = {
     'client_id': client_id,
     'client_secret': client_secret, #'' if tenant_id else client_secret, # No client secret if tenant_id set (MS) ???
@@ -243,13 +248,12 @@ def auth_refresh(client_id, client_secret, refresh_token, tenant_id=None):
     if 'error' in response:
       raise Exception(response.get('error_description'))
     else:
-      raise Exception('Refresh access token failed with staus code {}'.format(r.status_code))
+      raise Exception('Refresh access token failed with status code {}'.format(r.status_code))
 
   if 'access_token' in response:
-    access_token = response.get('access_token')
-    refresh_token = response.get('refresh_token')
+    return response.get('access_token'), response.get('refresh_token')
 
-  return access_token, refresh_token
+  raise Exception('Refresh access token failed')
 
 
 def auth_url(client_id, redirect_uri, offline=False, tenant_id=None):
@@ -294,9 +298,6 @@ def auth_code(client_id, redirect_uri, offline=False, callback=None, tenant_id=N
 
 
 def auth_request(client_id, client_secret, redirect_uri, authorization_code, tenant_id=None):
-  access_token = None
-  refresh_token = None
-
   data = {
     'client_id': client_id,
     'client_secret': client_secret,
@@ -320,13 +321,13 @@ def auth_request(client_id, client_secret, redirect_uri, authorization_code, ten
     if 'error' in response:
       raise Exception(response.get('error_desciption'))
     else:
-      raise Exception('Request access token failed with staus code {}'.format(r.status_code))
+      raise Exception('Request access token failed with status code {}'.format(r.status_code))
 
   if 'access_token' in response:
-    access_token = response.get('access_token')
-    refresh_token = response.get('refresh_token')
+    return response.get('access_token'), response.get('refresh_token')
 
-  return access_token, refresh_token
+  raise Exception('Request access token failed')
+
 
 
 def device_auth_code(client_id, callback=None, tenant_id=None):
