@@ -462,6 +462,7 @@ class MailBox(object):
     self.ssl      = ssl
 
     if oauth2_parms:
+      #for attr in oauth2_parms.keys():
       for attr in ['client_id', 'client_secret', 'refresh_token', 'redirect_uri', 'callback', 'tenant_id']:
         setattr(self, attr, oauth2_parms.get(attr))
 
@@ -538,6 +539,7 @@ class MailBox(object):
 
   def fetch(self, uid):
     #status, data = self.imap.uid('fetch', uid, '(RFC822)')
+    #status, data = self.imap.uid('fetch', uid, 'UID RFC822.SIZE FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (From To Cc Bcc Subject Date In-Reply-To Content-Type Reply-To)]'
     status, data = self.imap.uid('fetch', uid, '(BODY.PEEK[])')
     if status == 'OK' and data[0]:
       email_msg = email.message_from_bytes(data[0][1])
@@ -742,7 +744,7 @@ class MailBox(object):
             total_msgs = counter
             log('{} counter updated: {} messages'.format(folder, total_msgs), level='DEBUG')
 
-      except IDLE_COMPLETE:
+      except IMAP_IDLE_COMPLETE:
         try:
           if new_msg:
             evaluate(total_msgs, counter, callback)

@@ -8,16 +8,16 @@ import ssl
 from socket import error as socket_error, create_connection as create_connection
 
 # User defined Exceptions
-class IDLE_FAILED(Exception):
+class IMAP_IDLE_FAILED(Exception):
   pass
 
-class IDLE_DISCONNECT(Exception):
+class IMAP_IDLE_DISCONNECT(Exception):
   pass
 
-class IDLE_TIMEOUT(Exception):
+class IMAP_IDLE_TIMEOUT(Exception):
   pass
 
-class IDLE_COMPLETE(Exception):
+class IMAP_IDLE_COMPLETE(Exception):
   pass
 
 class IMAP_CONNECT_ERROR(Exception):
@@ -83,10 +83,10 @@ def idle(connection, timeout=840, debug=None):
               connection.state = 'IDLE'
 
             if response.startswith(connection.tag + b' OK'):
-              raise IDLE_COMPLETE('IDLE completed (\'{}\')'.format(response.decode()))
+              raise IMAP_IDLE_COMPLETE('IDLE completed (\'{}\')'.format(response.decode()))
 
             elif response.startswith(b'* BYE '):
-              raise IDLE_DISCONNECT('Connection closed by server (\'{}\')'.format(response.decode()))
+              raise IMAP_IDLE_DISCONNECT('Connection closed by server (\'{}\')'.format(response.decode()))
 
             elif len(response.split(maxsplit=2)) == 3:
               num, message = response.split(maxsplit=2)[1:]
@@ -101,10 +101,10 @@ def idle(connection, timeout=840, debug=None):
       except ssl.SSLError as e:
         if  e.errno == ssl.SSL_ERROR_WANT_READ:
           continue
-        raise IDLE_DISCONNECT('Connection closed by server (\'{}\')'.format(str(e)))
+        raise IMAP_IDLE_DISCONNECT('Connection closed by server (\'{}\')'.format(str(e)))
 
       except (socket_error, OSError) as e:
-        raise IDLE_TIMEOUT('Connection timed out (\'{}\')'.format(str(e)))
+        raise IMAP_IDLE_TIMEOUT('Connection timed out (\'{}\')'.format(str(e)))
 
       except:
         raise
