@@ -34,39 +34,6 @@ def done(connection, debug=None):
     connection.send(b'DONE' + imaplib.CRLF)
 
 
-def readsock(sock, timeout=60):
-  while True:
-    try:
-      readable = select.select([sock], [], [], timeout)[0]
-
-      if readable:
-        try:
-          data = sock.recv(1024)
-
-        except ssl.SSLError as e:
-          if e.errno != ssl.SSL_ERROR_WANT_READ:
-            raise
-          continue
-
-        if not data:
-          break
-
-        data_left = sock.pending()
-        while data_left:
-          data += sock.recv(data_left)
-          data_left = sock.pending()
-
-        return [response.strip() for response in data.split(imaplib.CRLF) if response]
-
-      #else:
-      #  pass
-
-    except:
-      raise
-
-  return []
-
-
 def idle(connection, timeout=840, debug=None):
   try:
     connection.state_before_idle = connection.state
@@ -83,10 +50,8 @@ def idle(connection, timeout=840, debug=None):
         readable = select.select([connection.sock], [], [], timeout)[0]
 
         if readable:
-          #for response in iter(connection.readline, b''):
-          #  response = response.strip()
 
-          # Alternative start
+          """
           try:
             data = connection.sock.recv(1024)
 
@@ -105,11 +70,11 @@ def idle(connection, timeout=840, debug=None):
 
           responses = [response.strip() for response in data.split(imaplib.CRLF) if response]
 
-          #if debug:
-          #  debug('{} IDLE: {}'.format(connection.tag.decode(), responses))
-
           for response in responses:
-          # Alternative end
+          """
+
+          for response in iter(connection.readline, b''):
+            response = response.strip()
 
             if debug:
               debug('{} IDLE: {}'.format(connection.tag.decode(), response.decode()))
@@ -134,8 +99,8 @@ def idle(connection, timeout=840, debug=None):
           connection.done(debug=debug)
 
       except ssl.SSLError as e:
-        #if  e.errno == ssl.SSL_ERROR_WANT_READ:
-        #  continue
+        if  e.errno == ssl.SSL_ERROR_WANT_READ:
+          continue
         raise IDLE_DISCONNECT('Connection closed by server (\'{}\')'.format(str(e)))
 
       except (socket_error, OSError) as e:
