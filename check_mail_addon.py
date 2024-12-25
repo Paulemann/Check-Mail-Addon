@@ -763,7 +763,7 @@ class MailBox(object):
       finally:
         try:
           if err:
-            log('Error: {}, {}. Reconnecting to {} ...'.format(type(err).__name__, str(err), self.server), level='ERROR')
+            log('Error: {}, {}. Reconnecting to {} ...'.format(type(err).__name__, str(err), self.server), level='DEBUG')
 
             self.reconnect(terminate=False)
 
@@ -1075,7 +1075,7 @@ if __name__ == '__main__':
       # Check if processes are still alive:
       for account in ACCOUNTS:
         if 'connection' in account and not account['connection'].is_idle():
-          log('Mailbox {} disconnected. Reconnecting ...'.format(account['name']), level='ERROR')
+          log('Mailbox {} disconnected. Reconnecting ...'.format(account['name']), level='DEBUG')
           try:
             account['connection'].reconnect()
           except:

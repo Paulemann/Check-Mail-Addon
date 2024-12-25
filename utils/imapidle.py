@@ -42,9 +42,10 @@ def idle(connection, timeout=840, debug=None):
     connection.send(connection.tag + b' IDLE' + imaplib.CRLF)
 
     connection.sock.setblocking(False)
-    #connection.state = 'IDLE'
+    connection.state = 'IDLE'
 
-    #while connection.state == 'IDLE':
+    buffer = b''
+
     while True:
       try:
         readable = select.select([connection.sock], [], [], timeout)[0]
@@ -52,8 +53,12 @@ def idle(connection, timeout=840, debug=None):
         if readable:
 
           """
+          for response in iter(connection.readline, b''):
+            response = response.strip()
+          """
+
           try:
-            data = connection.sock.recv(1024)
+            data = buffer + connection.sock.recv(1024)
 
           except ssl.SSLError as e:
             if e.errno == ssl.SSL_ERROR_WANT_READ:
@@ -61,6 +66,8 @@ def idle(connection, timeout=840, debug=None):
             raise
 
           if not data:
+            if debug:
+              debug('{} IDLE: No data'.format(connection.tag.decode()))
             break
 
           data_left = connection.sock.pending()
@@ -68,19 +75,21 @@ def idle(connection, timeout=840, debug=None):
             data += connection.sock.recv(data_left)
             data_left = connection.sock.pending()
 
+          if data.endswith(imaplib.CRLF):
+            buffer = b''
+          else:
+            buffer = data
+            continue
+
           responses = [response.strip() for response in data.split(imaplib.CRLF) if response]
 
           for response in responses:
-          """
-
-          for response in iter(connection.readline, b''):
-            response = response.strip()
 
             if debug:
               debug('{} IDLE: {}'.format(connection.tag.decode(), response.decode()))
 
-            if response.startswith(b'+'):
-              connection.state = 'IDLE'
+            #if response.startswith(b'+'):
+            #  connection.state = 'IDLE'
 
             if response.startswith(connection.tag + b' OK'):
               raise IMAP_IDLE_COMPLETE('IDLE completed (\'{}\')'.format(response.decode()))
@@ -99,8 +108,10 @@ def idle(connection, timeout=840, debug=None):
           connection.done(debug=debug)
 
       except ssl.SSLError as e:
+        """
         if  e.errno == ssl.SSL_ERROR_WANT_READ:
           continue
+        """
         raise IMAP_IDLE_DISCONNECT('Connection closed by server (\'{}\')'.format(str(e)))
 
       except (socket_error, OSError) as e:
