@@ -285,10 +285,9 @@ def auth_url(client_id, redirect_uri, offline=False, tenant_id=None):
 
 
 def auth_code(client_id, redirect_uri, offline=False, callback=None, tenant_id=None):
-  # callback: Function that reads and returns authorization code from redirect_uri
-
   authorization_url = auth_url(client_id, redirect_uri, offline=offline, tenant_id=tenant_id)
 
+  # callback: Function that reads and returns authorization code from redirect_uri
   try:
     authorization_code = callback(authorization_url, redirect_uri)
   except:
@@ -331,8 +330,6 @@ def auth_request(client_id, client_secret, redirect_uri, authorization_code, ten
 
 
 def device_auth_code(client_id, callback=None, tenant_id=None):
-  # callback: Function that displays verification_url and user_code to the user
-
   data = {
     'client_id': client_id
   }
@@ -371,10 +368,14 @@ def device_auth_code(client_id, callback=None, tenant_id=None):
   else:
     verification_url = response.get('verification_url')
 
-  if callback:
+  # callback: Function that displays verification_url and user_code to the user
+  try:
     wait = callback(verification_url, user_code)
-    if wait:
-      expires_in = min(expires_in, wait)
+  except:
+    wait = 0
+
+  if wait:
+    expires_in = min(expires_in, wait)
 
   return device_code, expires_in, interval
 

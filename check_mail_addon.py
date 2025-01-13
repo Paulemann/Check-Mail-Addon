@@ -65,6 +65,11 @@ def debug(message):
 
 
 def device_auth_get(verification_url, user_code):
+  for account in ACCOUNTS:
+    if 'client_id' in account['oauth2_parms'] and account['oauth2_parms']['client_id'] in verification_url:
+      account_name = account['name']
+      break
+
   log(' - Sending OAuth2 notification message to kodi host(s) {}'.format(', '.join(KODI['host'])), level='DEBUG')
   for host in KODI['host']:
     if host_is_up(host, KODI['port']):
@@ -87,6 +92,13 @@ def device_auth_get(verification_url, user_code):
 
 
 def auth_get(authorization_url, redirect_uri):
+  authorization_code = ''
+
+  for account in ACCOUNTS:
+    if 'client_id' in account['oauth2_parms'] and account['oauth2_parms']['client_id'] in authorization_url:
+      account_name = account['name']
+      break
+
   log(' - Sending OAuth2 notification message to kodi host(s) {}'.format(', '.join(KODI['host'])), level='DEBUG')
   for host in KODI['host']:
     if host_is_up(host, KODI['port']):
@@ -97,7 +109,6 @@ def auth_get(authorization_url, redirect_uri):
     else:
       log(' - Kodi host {} is down or unreachable'.format(host), level='DEBUG')
 
-
   if MAILER:
     log(' - Sending OAuth2 notification message to {}'.format(', '.join(OAUTH2['notify'])), level='DEBUG')
     MAILER.send(OAUTH2['notify'], LOCALE['auth_required'],
@@ -107,9 +118,16 @@ def auth_get(authorization_url, redirect_uri):
     s = redirect_uri.rsplit(':', maxsplit=1)[1].strip('/')
     redirect_port = int(s) if s.isdigit() else 443
 
-    log(' - Running local web server on port {} ...'.format(redirect_port), level='DEBUG')
-    authorization_code = run_server(redirect_port, timeout=OAUTH2['wait'])
-    log(' - Local web server stopped: authorization code received', level='DEBUG')
+    log('***** Starting local web server to receive authorization code *******************', level='INFO')
+    log('***** Make sure your router/firewall accepts https requests on port {} {}*******'.format(redirect_port, (5 - len(str(redirect_port))) * '*'), level='INFO')
+    try:
+      authorization_code = run_server(redirect_port, timeout=OAUTH2['wait'])
+    except:
+      log('***** Local web server failed or timed out: no authorization code received ******', level='ERROR')
+      #authorization_code = ''
+      raise
+    else:
+      log('***** Local web server stopped: authorization code received *********************', level='INFO')
   #else:
   #  print('Enter this url in a browser to authorize your application to receive emails:\n{}'.format(authorization_url)) # --> log?
   #  redirect_url = input('Paste the full redirect URL here: ')
@@ -149,10 +167,11 @@ class Database(object):
                               created TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                               NOT NULL)
                           """)
+      # created DATETIME DEFAULT CURRENT_TIMESTAMP # DATETIME('now'))
       self.cursor.execute("""CREATE UNIQUE INDEX sender_subject ON email(sender, subject)""")
 
     except sqlite3.OperationalError:
-      log('Database already exists.', level='ERROR')
+      log('Database already exists', level='DEBUG')
 
   def save(self, mails):
     with self.connection:
@@ -247,6 +266,9 @@ def save_value(section, option, value):
     if value is False:
       if config.has_option(section, option):
         config.remove_option(section, option)
+      else:
+        log(' - There\'s no option {} in section [{}] of file {}'.format(option, section, CONFIG_FILE), level='DEBUG')
+        return False
     else:
       config.set(section, option, value)
 
@@ -429,7 +451,8 @@ def read_config():
         oauth2_parms = {
           'client_id':     {'type': 'str', 'mandatory': True},
           'client_secret': {'type': 'str'},
-          'refresh_token': {'type': 'str'},
+          #'refresh_token': {'type': 'str'},
+          'refresh_token': {'type': 'str', 'default': None},
           'tenant_id':     {'type': 'str', 'default': 'consumers' if account['name'].split('@')[1].split('.')[0] in MICROSOFT_DOMAINS else ''},
           'redirect_uri':  {'type': 'str', 'test': is_https},
           }
@@ -498,11 +521,15 @@ class MailBox(object):
         self.imap.done(debug=debug)
         self.imap.close()
 
-      except Exception as e:
+      except:
         pass
 
       finally:
-        self.imap.logout()
+        try:
+          self.imap.logout()
+
+        except:
+          pass
 
     if terminate:
       try:
@@ -510,7 +537,7 @@ class MailBox(object):
         if hasattr(self, 'mon') and self.mon:
           self.mon.terminate()
 
-      except Exception as e:
+      except:
         pass
 
 
@@ -562,8 +589,10 @@ class MailBox(object):
     if not self.port:
       self.port = 993 if self.ssl else 143
 
-    access_token = ''
-    refresh_token = ''
+    #access_token = ''
+    #refresh_token = ''
+    access_token = None
+    refresh_token = None
 
     try:
       if hasattr(self, 'client_id') and self.client_id:
@@ -625,16 +654,19 @@ class MailBox(object):
          raise Exception('Insufficient login/auth data')
 
     except socket_error as e:
-      log(' - Connection to {}:{} failed: {}'.format(self.server, self.port, e_decode(e)), level='ERROR')
+      log(' - Connection to {}:{} failed: {}, {}'.format(self.server, self.port, tyoe(e).__name__, e_decode(e)), level='ERROR')
       raise IMAP_CONNECT_ERROR(e_decode(e))
 
     except Exception as e:
-      log(' - Login of user {} failed: {}'.format(self.user, e_decode(e)), level='ERROR')
+      log(' - Login of user {} failed: {}, {}'.format(self.user, type(e).__name__, e_decode(e)), level='ERROR')
 
       # Token expired, revoked or authentication failed due to invalid credentials
       if hasattr(self, 'refresh_token') and self.refresh_token:
         log(' - Removing invalid token from configuration ...', level='DEBUG')
-        self.refresh_token = ''
+
+        #self.refresh_token = ''
+        self.refresh_token = None
+
         remove_token(self.user)
 
         raise OAUTH2_TOKEN_ERROR(e_decode(e))
@@ -763,7 +795,7 @@ class MailBox(object):
       finally:
         try:
           if err:
-            log('Error: {}, {}. Reconnecting to {} ...'.format(type(err).__name__, str(err), self.server), level='DEBUG')
+            log('{}: {}. Reconnecting to {} ...'.format(type(err).__name__, str(err), self.server), level='DEBUG')
 
             self.reconnect(terminate=False)
 
@@ -774,15 +806,8 @@ class MailBox(object):
             total_msgs = counter
 
         except Exception as e:
-          if 'expired' in str(e) or 'revoked' in str(e):
-            log('Token expired or revoked: {}'.format(str(e)), level='ERROR')
-            if hasattr(self, 'refresh_token') and self.refresh_token:
-              self.refresh_token = ''
-              remove_token(self.user)
-
-          else:
-            log('Error: {}, {}'.format(type(e).__name__, str(e)), level='ERROR')
-
+          log('{}: {}. Disconnect'.format(type(e).__name__, str(e)), level='ERROR')
+          #self.close(terminate=False)
           break # --> will break out of the loop and quit update, #raise # --> will raise Exeption to main and terminate program
 
     self.isRunning = False
@@ -908,7 +933,7 @@ def show(user, message):
 
   notify(user, from_name if from_name else from_address, msg['subject'])
 
-  log('New Message:')
+  log('New message:')
 
   fileName = ''
 
@@ -1000,11 +1025,17 @@ def show(user, message):
     log('Attachments: {}'.format(msg['attach']))
   log('================================================================================')
 
-  #mydb.save([msg])
+  if DB_FILE:
+    try:
+      mydb.save([msg])
+      #mydb.execute("DELETE FROM email WHERE created < DATETIME('now', '-7 day')")
+      log('Message saved', level='DEBUG')
+    except Exception as e:
+      log('Unexpected error while saving message: {}, {}'.format(type(e).__name__, str(e)), level='ERROR')
 
 
 if __name__ == '__main__':
-  global CONFIG_FILE, LOG_FILE, IDLE_TIMEOUT, __DEBUG__
+  global CONFIG_FILE, LOG_FILE, IDLE_TIMEOUT, __DEBUG__, DB_FILE
 
   parser = argparse.ArgumentParser(description='Sends a notification to a kodi host when a new email is received')
 
@@ -1013,24 +1044,28 @@ if __name__ == '__main__':
   parser.add_argument('-l', '--logfile', dest='log_file', default=None, help="Path to log file (Default: None=stdout)")
   parser.add_argument('-t', '--timeout', dest='timeout', default=840, help="Connection Timeout (Default: 840 sec. = 14 min.)")
   parser.add_argument('-c', '--config', dest='config_file', default=os.path.splitext(os.path.basename(__file__))[0] + '.ini', help="Path to config file (Default: <Script Name>.ini)")
+  parser.add_argument('-s', '--save', dest='save_file', nargs='?', const=os.path.splitext(os.path.basename(__file__))[0] + '.db', default=None, help="Path to message database (Default: None)")
 
   args = parser.parse_args()
 
+  DB_FILE      = args.save_file
   CONFIG_FILE  = args.config_file
   LOG_FILE     = args.log_file
   IDLE_TIMEOUT = int(args.timeout)
   __DEBUG__    = args.debug
 
-  DB_FILE = os.path.splitext(os.path.basename(__file__))[0] + '.db'
-
   if LOG_FILE:
-    logging.basicConfig(filename=LOG_FILE, format='%(asctime)s [%(levelname)s]: %(message)s', datefmt='%m/%d/%Y %H:%M:%S', filemode='w', level=logging.DEBUG)
+    #logging.basicConfig(filename=LOG_FILE, format='%(asctime)s [%(levelname)s]: %(message)s', datefmt='%m/%d/%Y %H:%M:%S', filemode='w', level=logging.DEBUG)
+    logging.basicConfig(filename=LOG_FILE, format='%(asctime)s [%(levelname)s]: %(message)s', datefmt='%m/%d/%Y %H:%M:%S', filemode='a', level=logging.DEBUG)
+
+  log('***** {} started *****'.format(os.path.basename(__file__)), level='INFO')
 
   log('Configured options:', level='DEBUG')
   log(' - Output Debug:  {}'.format(__DEBUG__), level='DEBUG')
   log(' - Log File:      {}'.format(LOG_FILE), level='DEBUG')
   log(' - IDLE Timeout:  {} sec.'.format(IDLE_TIMEOUT), level='DEBUG')
   log(' - Config. File:  {}'.format(CONFIG_FILE), level='DEBUG')
+  log(' - Msg. Database: {}'.format(DB_FILE), level='DEBUG')
 
   try:
     log('Reading configuration from file {} ...'.format(CONFIG_FILE), level='DEBUG')
@@ -1043,7 +1078,12 @@ if __name__ == '__main__':
   log(' - Accounts:      {}'.format(', '.join([account['name'] for account in ACCOUNTS])), level='DEBUG')
   log(' - Attachments of types {} sent from {} will be saved in {}'.format(', '.join(ATTACHMENTS['type']), ', '.join(ATTACHMENTS['from']), ATTACHMENTS['path']), level='DEBUG')
 
-  #mydb = Database(DB_FILE)
+  if DB_FILE:
+    try:
+      mydb = Database(DB_FILE)
+    except Exception as e:
+      log('An error occured while initializing message database {}: {}, {}'.format(DB_FILE, type(e).__name__, str(e)), level='ERROR')
+      DB_FILE = None
 
   for account in ACCOUNTS:
     count = 0
@@ -1058,12 +1098,13 @@ if __name__ == '__main__':
         break
 
       except OAUTH2_TOKEN_ERROR:
-        account['oauth2_parms']['refresh_token'] = ''
+        #account['oauth2_parms']['refresh_token'] = ''
+        account['oauth2_parms']['refresh_token'] = None
         count += 1
         continue
 
       except Exception as e:
-        log(' - An error occured while initializing account {}: {} --> Skip.'.format(account['name'], str(e)), level='ERROR')
+        log(' - An error occured while initializing account {}: {}, {} --> Skip.'.format(account['name'], type(e).__name__, str(e)), level='ERROR')
         break
 
     if 'connection' in account:
@@ -1077,6 +1118,7 @@ if __name__ == '__main__':
         if 'connection' in account and not account['connection'].is_idle():
           log('Mailbox {} disconnected. Reconnecting ...'.format(account['name']), level='DEBUG')
           try:
+            #account['connection'].connect()
             account['connection'].reconnect()
           except:
             raise
