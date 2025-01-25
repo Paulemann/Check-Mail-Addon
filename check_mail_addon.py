@@ -38,6 +38,9 @@ GOOGLE_DOMAINS = ['gmail', 'googlemail', 'google']
 # Time format
 TIME_FMT = '%d.%m.%Y %H:%M:%S'
 
+MIN_WAIT_TIME = 300
+MAX_REAUTHS = 2
+
 #logging.getLogger('requests.packages.urllib3').propagate = False
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 
@@ -70,7 +73,7 @@ def device_auth_get(verification_url, user_code):
       account_name = account['name']
       break
 
-  log(' - Sending OAuth2 notification message to kodi host(s) {}'.format(', '.join(KODI['host'])), level='DEBUG')
+  log('[{}] Sending notification to kodi host(s) {}'.format(account_name, ', '.join(KODI['host'])), level='DEBUG')
   for host in KODI['host']:
     if host_is_up(host, KODI['port']):
       kodi_request(host, 'GUI.ShowNotification', params={'title': LOCALE['auth_required'],
@@ -78,10 +81,10 @@ def device_auth_get(verification_url, user_code):
         'displaytime': 10000},
         port=KODI['port'], user=KODI['user'], password=KODI['password'])
     else:
-      log(' - Kodi host {} is down or unreachable'.format(host), level='DEBUG')
+      log('[{}] Kodi host {} is down or unreachable'.format(account_name, host), level='DEBUG')
 
   if MAILER:
-    log(' - Sending OAuth2 notification message to {}'.format(', '.join(OAUTH2['notify'])), level='DEBUG')
+    log('[{}] Sending notification to mail recipient(s) {}'.format(account_name, ', '.join(OAUTH2['notify'])), level='DEBUG')
     MAILER.send(OAUTH2['notify'], LOCALE['auth_required'],
       LOCALE['device_auth_message_text'].format(verification_url, user_code),
       html=LOCALE['device_auth_message_html'].format(verification_url, user_code))
@@ -99,7 +102,7 @@ def auth_get(authorization_url, redirect_uri):
       account_name = account['name']
       break
 
-  log(' - Sending OAuth2 notification message to kodi host(s) {}'.format(', '.join(KODI['host'])), level='DEBUG')
+  log('[{}] Sending notification to kodi host(s) {}'.format(account_name,', '.join(KODI['host'])), level='DEBUG')
   for host in KODI['host']:
     if host_is_up(host, KODI['port']):
       kodi_request(host, 'GUI.ShowNotification', params={'title': LOCALE['auth_required'],
@@ -107,10 +110,10 @@ def auth_get(authorization_url, redirect_uri):
        'displaytime': 10000},
        port=KODI['port'], user=KODI['user'], password=KODI['password'])
     else:
-      log(' - Kodi host {} is down or unreachable'.format(host), level='DEBUG')
+      log('[{}] Kodi host {} is down or unreachable'.format(account_name, host), level='DEBUG')
 
   if MAILER:
-    log(' - Sending OAuth2 notification message to {}'.format(', '.join(OAUTH2['notify'])), level='DEBUG')
+    log('[{}] Sending notification to mail recipient(s) {}'.format(account_name, ', '.join(OAUTH2['notify'])), level='DEBUG')
     MAILER.send(OAUTH2['notify'], LOCALE['auth_required'],
       LOCALE['auth_message_text'].format(authorization_url),
       html=LOCALE['auth_message_html'].format(authorization_url))
@@ -118,16 +121,16 @@ def auth_get(authorization_url, redirect_uri):
     s = redirect_uri.rsplit(':', maxsplit=1)[1].strip('/')
     redirect_port = int(s) if s.isdigit() else 443
 
-    log('***** Starting local web server to receive authorization code *******************', level='INFO')
-    log('***** Make sure your router/firewall accepts https requests on port {} {}*******'.format(redirect_port, (5 - len(str(redirect_port))) * '*'), level='INFO')
+    log('[{}] ***** Starting local web server to receive authorization code *******************'.format(account_name), level='INFO')
+    log('[{}] ***** Make sure your router/firewall accepts https requests on port {} {}*******'.format(account_name, redirect_port, (5 - len(str(redirect_port))) * '*'), level='INFO')
     try:
       authorization_code = run_server(redirect_port, timeout=OAUTH2['wait'])
     except:
-      log('***** Local web server failed or timed out: no authorization code received ******', level='ERROR')
+      log('[{}] ***** Local web server failed or timed out: no authorization code received ******'.format(account_name), level='ERROR')
       #authorization_code = ''
       raise
     else:
-      log('***** Local web server stopped: authorization code received *********************', level='INFO')
+      log('[{}] ***** Local web server stopped: authorization code received *********************'.format(account_name), level='INFO')
   #else:
   #  print('Enter this url in a browser to authorize your application to receive emails:\n{}'.format(authorization_url)) # --> log?
   #  redirect_url = input('Paste the full redirect URL here: ')
@@ -253,21 +256,60 @@ def is_method(f):
     return False
 
 
+def read_value(section, option, type='str', default=None, config=None):
+  try:
+    if config is None:
+      config = configparser.ConfigParser()
+      config.read([os.path.abspath(CONFIG_FILE)])
+
+    if not config.has_section(section):
+      #raise Exception('Invalid section')
+      log('There\'s no section [{}] in file {}'.format(section, CONFIG_FILE), level='ERROR')
+      return default
+
+    if type == 'int':
+      default =  default or 0
+      return int(config.get(section, option))
+
+    elif type == 'str':
+      default =  default or ''
+      return config.get(section, option)
+
+    elif type == 'list':
+      default =  default or []
+      return [p.strip(' "\'').lower() for p in config.get(section, option).split(',')]
+
+    elif type == 'csv':
+      default =  default or []
+      return [int(p) for p in config.get(section, option).split(',')]
+
+    elif type == 'bool':
+      default =  default or False
+      return config.get(section, option) == 'yes'
+
+    elif type == 'date':
+      return datetime.strptime(config.get(section, option), TIME_FMT)
+
+  except:
+    pass
+
+  return default
+
+
 def save_value(section, option, value):
   try:
     config = configparser.ConfigParser(delimiters=('='))
-
     config.read([os.path.abspath(CONFIG_FILE)])
 
     if not config.has_section(section):
-      log(' - There\'s no section [{}] in file {}'.format(section, CONFIG_FILE), level='ERROR')
+      log('There\'s no section [{}] in file {}'.format(section, CONFIG_FILE), level='ERROR')
       return False
 
     if value is False:
       if config.has_option(section, option):
         config.remove_option(section, option)
       else:
-        log(' - There\'s no option {} in section [{}] of file {}'.format(option, section, CONFIG_FILE), level='DEBUG')
+        log('There\'s no option {} in section [{}] of file {}'.format(option, section, CONFIG_FILE), level='DEBUG')
         return False
     else:
       config.set(section, option, value)
@@ -276,100 +318,55 @@ def save_value(section, option, value):
       config.write(configfile, space_around_delimiters=True)
 
   except Exception as e:
-    log(' - Updating option \'{}\' in section [{}] of file {} failed: {}'.format(option, section, CONFIG_FILE, str(e)), level='ERROR')
+    log('Updating option \'{}\' in section [{}] of file {} failed: {}'.format(option, section, CONFIG_FILE, str(e)), level='ERROR')
     return False
 
   if value is False:
-    log(' - Option \'{}\' in section [{}] of file {} removed'.format(option, section, CONFIG_FILE), level='DEBUG')
+    log('Option \'{}\' in section [{}] of file {} removed'.format(option, section, CONFIG_FILE), level='DEBUG')
   else:
-    log(' - Option \'{}\' in section [{}] of file {} updated'.format(option, section, CONFIG_FILE), level='DEBUG')
+    log('Option \'{}\' in section [{}] of file {} updated'.format(option, section, CONFIG_FILE), level='DEBUG')
 
   return True
 
 
-def save_timestamp(user, timestamp):
-  section = user
-
-  for account in ACCOUNTS:
-    if account['user'] == user:
-      section = account['name']
-
+def save_timestamp(section, timestamp):
   return save_value(section, 'updated', timestamp)
 
 
-def save_token(user, token):
-  section = user
-
-  for account in ACCOUNTS:
-    if account['user'] == user:
-      section = account['name']
-
+def save_token(section, token):
   return save_value(section, 'refresh_token', token)
 
 
-def remove_token(user):
-  section = user
-
-  for account in ACCOUNTS:
-    if account['user'] == user:
-      section = account['name']
-
+def remove_token(section):
   return save_value(section, 'refresh_token', False)
 
 
-def read_section(config, section, options, my_dict):
+def reload_token(section):
+  return read_value(section, 'refresh_token')
+
+
+def read_section(section, options, config):
+  section_cfg = {}
 
   for option, value in options.items():
-    if value.get('type') == 'int':
-      if config.has_option(section, option):
-        my_dict[option] = int(config.get(section, option))
-      else:
-        my_dict[option] = int(value.get('default', 0))
+    section_cfg[option] = read_value(section, option, value.get('type'), value.get('default'), config)
 
-    elif value.get('type') == 'str':
-      if config.has_option(section, option):
-        my_dict[option] = config.get(section, option) #.lower()
-      else:
-        my_dict[option] = value.get('default', '')
-
-    elif value.get('type') == 'list':
-      if config.has_option(section, option):
-        my_dict[option] = [p.strip(' "\'').lower() for p in config.get(section, option).split(',')]
-      else:
-        my_dict[option] = value.get('default', [])
-
-    elif value.get('type') == 'csv':
-      if config.has_option(section, option):
-        my_dict[option] = [int(p) for p in config.get(section, option).split(',')]
-      else:
-        my_dict[option] = value.get('default', [])
-
-    elif value.get('type') == 'bool':
-      if config.has_option(section, option):
-        my_dict[option] = (config.get(section, option) == 'yes')
-      else:
-        my_dict[option] = bool(value.get('default', 0))
-
-    elif value.get('type') == 'date':
-      if config.has_option(section, option):
-        my_dict[option] = datetime.strptime(config.get(section, option), TIME_FMT)
-      else:
-        my_dict[option] = value.get('default', None)
-
-    if value.get('mandatory') and not my_dict[option]:
+    if value.get('mandatory') and not section_cfg[option]:
       log('Missing mandatory config value; section: [{}], option: {}'. format(section, option), level='ERROR')
       raise Exception('Missing value')
 
-    if value.get('test') and my_dict[option]:
+    if value.get('test') and section_cfg[option]:
       if value['type'] in ['list', 'csv']:
-        test = my_dict[option]
+        test = section_cfg[option]
       else:
-        test = [my_dict[option]]
+        test = [section_cfg[option]]
 
       for element in test:
         if element and not value['test'](element):
           log('Invalid config value; section: [{}], option: {}, value: {}'. format(section, option, config.get(section, option)), level='ERROR')
           raise Exception('Invalid value')
+
+  return section_cfg
 
 
 def read_config():
@@ -390,14 +387,12 @@ def read_config():
         ACCOUNTS.append(account)
         #ACCOUNTS.append({'name': section_name})
 
-    OAUTH2 = {}
     oauth2_options = {
       'notify': {'type': 'list', 'test': is_mailaddress},
       'wait':   {'type': 'int', 'default': 300}
       }
-    read_section(config, 'OAuth2', oauth2_options, OAUTH2)
+    OAUTH2 = read_section('OAuth2', oauth2_options, config)
 
-    LOCALE = {}
     locale_options = {
       'new_message_for':          {'type': 'str', 'default': 'New message for'},
       'from':                     {'type': 'str', 'default': 'From'},
@@ -410,24 +405,22 @@ def read_config():
       'auth_message_html':        {'type': 'str', 'default': AUTH_HTML},
       'device_auth_message_html': {'type': 'str', 'default': DEVICE_AUTH_HTML},
       }
-    read_section(config, 'Customization', locale_options, LOCALE)
+    LOCALE = read_section('Customization', locale_options, config)
 
-    KODI = {}
     kodi_options = {
       'host': {'type': 'list', 'test': is_hostname},
       'port': {'type': 'int', 'test': is_int, 'default': 8080},
       'user': {'type': 'str', 'default': 'kodi'},
       'password': {'type': 'str'}
       }
-    read_section(config, 'KODI JSON-RPC', kodi_options, KODI)
+    KODI = read_section('KODI JSON-RPC', kodi_options, config)
 
-    ATTACHMENTS = {}
     attachments_options = {
       'path': {'type': 'str'},
       'type': {'type': 'list'},
       'from': {'type': 'list'}
       }
-    read_section(config, 'Attachments', attachments_options, ATTACHMENTS)
+    ATTACHMENTS = read_section('Attachments', attachments_options, config)
 
     SMTP = []
     for account in ACCOUNTS:
@@ -441,22 +434,20 @@ def read_config():
         'password':  {'type': 'str'},
         'updated':   {'type': 'date'},
         }
-      read_section(config, account['name'], account_options, account)
+      account.update(read_section(account['name'], account_options, config))
 
       if account['smtp_host']:
         SMTP.append(account)
 
-      account['oauth2_parms'] = {}
       if config.has_option(account['name'], 'client_id'):
         oauth2_parms = {
           'client_id':     {'type': 'str', 'mandatory': True},
           'client_secret': {'type': 'str'},
-          #'refresh_token': {'type': 'str'},
-          'refresh_token': {'type': 'str', 'default': None},
+          'refresh_token': {'type': 'str'},
           'tenant_id':     {'type': 'str', 'default': 'consumers' if account['name'].split('@')[1].split('.')[0] in MICROSOFT_DOMAINS else ''},
           'redirect_uri':  {'type': 'str', 'test': is_https},
           }
-        read_section(config, account['name'], oauth2_parms, account['oauth2_parms'])
+        account['oauth2_parms'] = read_section(account['name'], oauth2_parms, config)
 
         if config.has_option(account['name'], 'redirect_uri'):
           if 'auth_get' in globals():
@@ -464,6 +455,8 @@ def read_config():
         else:
           if 'device_auth_get' in globals():
             account['oauth2_parms']['callback'] = device_auth_get
+      else:
+        account['oauth2_parms'] = {}
 
     if SMTP:
       log(' - SMTP data found', level='DEBUG')
@@ -477,7 +470,8 @@ def read_config():
 
 
 class MailBox(object):
-  def __init__(self, server, user, password, port=None, ssl=True, updated=None, **oauth2_parms):
+  def __init__(self, name, server, user, password, port=None, ssl=True, updated=None, **oauth2_parms):
+    self.name     = name
     self.server   = server
     self.user     = user
     self.password = password
@@ -490,31 +484,25 @@ class MailBox(object):
         setattr(self, attr, oauth2_parms.get(attr))
 
     if updated:
-      log(' - Last message received on {}'.format(updated.strftime('%B %-d, %Y at %-H:%M')), level='DEBUG')
+      log('[{}] Last message received on {}'.format(self.name, updated.strftime('%B %-d, %Y at %-H:%M')), level='DEBUG')
       self.updated = updated
     else:
-      log(' - Date of last received message is unknown', level='DEBUG')
+      log('[{}] Date of last message unknown'.format(self.name), level='DEBUG')
       self.updated = datetime.now().replace(second=0, microsecond=0)
 
-    try:
-      self.connect()
-    except:
-      self.close()
-      raise
 
-
-  def monitor(self, folder, callback=None, catchup=False):
+  def monitor(self, folder, callback=None, catchup=False, delay=None):
     self.isRunning = False
-    self.mon = Process(target=self.update, args=(folder, callback, catchup,))
+    self.mon = Process(target=self.update, args=(folder, callback, catchup, delay,))
     self.mon.start()
 
 
-  def is_idle(self):
+  def is_idling(self):
     return self.mon.is_alive() # and self.isRunning
 
 
-  def close(self, terminate=True):
-    log(' - Closing connection to {} ...'.format(self.server), level='DEBUG')
+  def close(self):
+    log('[{}] Closing connection ...'.format(self.name), level='DEBUG')
 
     if hasattr(self, 'imap') and self.imap:
       try:
@@ -531,14 +519,13 @@ class MailBox(object):
         except:
           pass
 
-    if terminate:
-      try:
-        self.isRunning = False
-        if hasattr(self, 'mon') and self.mon:
-          self.mon.terminate()
+    try:
+      self.isRunning = False
+      if hasattr(self, 'mon') and self.mon:
+        self.mon.terminate()
 
-      except:
-        pass
+    except:
+      pass
 
 
   def search(self, *args):
@@ -589,57 +576,49 @@ class MailBox(object):
     if not self.port:
       self.port = 993 if self.ssl else 143
 
-    #access_token = ''
-    #refresh_token = ''
-    access_token = None
-    refresh_token = None
+    access_token = ''
+    refresh_token = ''
 
     try:
       if hasattr(self, 'client_id') and self.client_id:
-        log(' - Auth. method: OAuth2', level='DEBUG')
-
         if self.refresh_token:
-          log(' - Requesting access token (using refresh token)', level='DEBUG')
+          log('[{}] Requesting access (authorization by refresh token) ...'.format(self.name), level='DEBUG')
           access_token, refresh_token = auth_refresh(self.client_id, self.client_secret, self.refresh_token, tenant_id=self.tenant_id)
 
-        elif self.redirect_uri:
-          log(' - Requesting access token (application authorization required)', level='DEBUG')
-
-          if not self.callback:
-            raise Exception('OAuth2 callback not set')
-
-          authorization_code = auth_code(self.client_id, self.redirect_uri, offline=True, callback=self.callback, tenant_id=self.tenant_id)
-          if authorization_code:
-            access_token, refresh_token = auth_request(self.client_id, self.client_secret, self.redirect_uri, authorization_code, tenant_id=self.tenant_id)
-          else:
-            raise Exception('No OAuth2 authorization code')
-
         else:
-          log(' - Requesting access token (device authorization required)', level='DEBUG')
+          log('[{}] Requesting access (explicit authorization required) ...'.format(self.name), level='DEBUG')
 
           if not self.callback:
             raise Exception('OAuth2 callback not set')
 
-          device_code, expires_in, interval = device_auth_code(self.client_id, callback=self.callback, tenant_id=self.tenant_id)
-          if device_code:
-            access_token, refresh_token = device_auth_request(self.client_id, self.client_secret, device_code, expires_in=expires_in, interval=interval, tenant_id=self.tenant_id)
+          if self.redirect_uri:
+            authorization_code = auth_code(self.client_id, self.redirect_uri, offline=True, callback=self.callback, tenant_id=self.tenant_id)
+            if authorization_code:
+              access_token, refresh_token = auth_request(self.client_id, self.client_secret, self.redirect_uri, authorization_code, tenant_id=self.tenant_id)
+            else:
+              raise Exception('No OAuth2 authorization code')
+
           else:
-            raise Exception('No OAuth2 device code')
+            device_code, expires_in, interval = device_auth_code(self.client_id, callback=self.callback, tenant_id=self.tenant_id)
+            if device_code:
+              access_token, refresh_token = device_auth_request(self.client_id, self.client_secret, device_code, expires_in=expires_in, interval=interval, tenant_id=self.tenant_id)
+            else:
+              raise Exception('No OAuth2 device code')
 
         if refresh_token:
-          log(' - New refresh token received', level='DEBUG')
+          log('[{}] New refresh token received'.format(self.name), level='DEBUG')
           self.refresh_token = refresh_token
-          save_token(self.user, self.refresh_token)
+          save_token(self.name, self.refresh_token)
 
       else:
-        log(' - Auth. method: username, password', level='DEBUG')
+        log('[{}] Authenticating with username, password ...'.format(self.name), level='DEBUG')
 
       if self.ssl:
         self.imap = imaplib.IMAP4_SSL(self.server, self.port)
       else:
         self.imap = imaplib.IMAP4(self.server, self.port)
 
-      log(' - Connected to {}'.format(self.server), level='DEBUG')
+      log('[{}] Connected to IMAP server {} on port {}'.format(self.name, self.server, self.port), level='DEBUG')
 
       #self.imap.debug = 4 # 10
 
@@ -654,48 +633,40 @@ class MailBox(object):
          raise Exception('Insufficient login/auth data')
 
     except socket_error as e:
-      log(' - Connection to {}:{} failed: {}, {}'.format(self.server, self.port, tyoe(e).__name__, e_decode(e)), level='ERROR')
+      log('[{}] Connection failed: {}'.format(self.name, e_decode(e)), level='ERROR')
       raise IMAP_CONNECT_ERROR(e_decode(e))
 
     except Exception as e:
-      log(' - Login of user {} failed: {}, {}'.format(self.user, type(e).__name__, e_decode(e)), level='ERROR')
+      log('[{}] Login failed: {}'.format(self.name, e_decode(e)), level='ERROR')
 
-      # Token expired, revoked or authentication failed due to invalid credentials
-      if hasattr(self, 'refresh_token') and self.refresh_token:
-        log(' - Removing invalid token from configuration ...', level='DEBUG')
+      if any(['expired' in e_decode(e), 'revoked' in e_decode(e)]) and hasattr(self, 'refresh_token') and self.refresh_token:
+        log('[{}] Removing invalid token from configuration ...'.format(self.name), level='DEBUG')
 
-        #self.refresh_token = ''
-        self.refresh_token = None
-
-        remove_token(self.user)
+        remove_token(self.name)
+        self.refresh_token = ''
 
         raise OAUTH2_TOKEN_ERROR(e_decode(e))
 
       raise IMAP_AUTH_ERROR(e_decode(e))
 
-    log(' - User {} logged in'.format(self.user), level='DEBUG')
+    log('[{}] Login successful'.format(self.name), level='DEBUG')
 
 
   def select(self, folder):
     if folder:
       status, data = self.imap.select(folder, readonly=True)
       if status == 'OK':
-        log(' - {}: {} messages'.format(folder, int(data[0])), level='DEBUG')
+        log('[{}] {}: {} message{}'.format(self.name, folder, int(data[0]), 's' if int(data[0]) > 1 else ''), level='DEBUG')
         return int(data[0])
       else:
-        log(' - Selection of {} failed'.format(folder), level='DEBUG')
+        log('[{}] Selection of {} failed'.format(self.name, folder), level='ERROR')
         raise Exception('Mailbox folder selection failed')
     else:
-      log(' - Mailbox folder unnamed', level='DEBUG')
+      log('[{}] Mailbox folder unnamed'.format(self.name), level='ERROR')
       raise Exception('Mailbox folder unnamed')
 
 
-  def reconnect(self, terminate=True):
-    self.close(terminate)
-    self.connect()
-
-
-  def update(self, folder, callback, catchup=False):
+  def update(self, folder, callback, catchup=False, delay=None):
 
     def evaluate(start, end, callback):
       start_uid = self.num2uid(str(start).encode())
@@ -706,7 +677,7 @@ class MailBox(object):
         end = max(end, len(uid_list) + start)
 
       if end > start:
-        log('Found {} new UID{}: {}'.format(end - start, 's' if (end - start) > 1 else '', ', '.join([u.decode('utf-8') for u in uid_list])), level='DEBUG')
+        log('[{}] Found {} new UID{}: {}'.format(self.name, end - start, 's' if (end - start) > 1 else '', ', '.join([u.decode('utf-8') for u in uid_list])), level='DEBUG')
 
         for uid in uid_list:
           email_msg = self.fetch(uid)
@@ -718,23 +689,49 @@ class MailBox(object):
             except:
               timestamp = datetime.now().astimezone().strftime("%a, %d %b %Y %H:%M:%S %z")
             self.updated = datetime.fromtimestamp(mktime_tz(parsedate_tz(timestamp)))
-            save_timestamp(self.user, self.updated.strftime(TIME_FMT))
+            save_timestamp(self.name, self.updated.strftime(TIME_FMT))
 
           if email_msg and callback:
             callback(self.user, email_msg)
       else:
-        log('No new UID', level='DEBUG')
+        log('[{}] No new UID'.format(self.name), level='DEBUG')
 
+    try:
+      #when delay is specified, calculate wait time before next connect attempt
+      if delay:
+        wait = (((MIN_WAIT_TIME // 60) ** delay.value) - 1) * 60
+        if wait > 0
+          log('[{}] Waiting {} secs. before reconnecitng ...'.format(self.name, wait), level='DEBUG')
+          sleep(wait)
+
+      if hasattr(self, 'refresh_token'):
+        log('[{}] Reloading refresh token ...'.format(self.name), level='DEBUG')
+        self.refresh_token = reload_token(self.name)
+      self.connect()
+
+    except Exception as e:
+      self.close()
+      log('[{}] Disconnected'.format(self.name), level='ERROR')
+
+     # increment delay value after failed connect
+      if delay:
+        delay.value += 1
+
+      return
+
+    # re-init delay value after successful connect
+    if delay:
+      delay.value = 0
 
     try:
       total_msgs = self.select(folder)
 
     except Exception as e:
-      log('Error: {}, {}'.format(type(e).__name__, str(e)), level='ERROR')
+      log('[{}] Error: {}'.format(self.name, str(e)), level='ERROR')
       return
 
     if catchup:
-      log('Retrieving unread messages ...', level='DEBUG')
+      log('[{}] Retrieving unread messages ...'.format(self.name), level='DEBUG')
 
       # Fetch all unread messages since last update:
       date = self.updated.strftime("%d-%b-%Y")
@@ -749,12 +746,12 @@ class MailBox(object):
       #uid_list = self.search('ON', today)
 
       if uid_list:
-        log(' - Found {} unread messages'.format(len(uid_list)), level='DEBUG')
+        log('[{}] Found {} unread messages'.format(self.name, len(uid_list)), level='DEBUG')
         for uid in uid_list:
           email_msg = self.fetch(uid)
           callback(self.user, email_msg)
       else:
-        log(' - No unread messages', level='DEBUG')
+        log('[{}] No unread messages'.self,name, level='DEBUG')
 
     self.isRunning = True
 
@@ -765,7 +762,7 @@ class MailBox(object):
       try:
         for num, msg in self.imap.idle(timeout=IDLE_TIMEOUT, debug=debug):
           if msg == b'EXISTS':
-            log('{} changed: {} messages (current) --> {} messages (new)'.format(folder, total_msgs, int(num)), level='DEBUG')
+            log('[{}] {} updated. {} new messages'.format(self.name, folder, int(num) -total_msgs), level='DEBUG')
 
             counter = int(num)
             if counter > total_msgs:
@@ -774,41 +771,18 @@ class MailBox(object):
               continue
 
             total_msgs = counter
-            log('{} counter updated: {} messages'.format(folder, total_msgs), level='DEBUG')
 
       except IMAP_IDLE_COMPLETE:
-        try:
-          if new_msg:
-            evaluate(total_msgs, counter, callback)
+        if new_msg:
+          evaluate(total_msgs, counter, callback)
+          total_msgs = counter
 
-            total_msgs = counter
-            log('{} counter updated: {} messages'.format(folder, total_msgs), level='DEBUG')
-
-          log('Restarting IDLE ...', level='DEBUG')
-
-        except Exception as e:
-          err = e
+        log('[{}] Restarting IDLE ...'.format(self.name), level='DEBUG')
+        continue
 
       except Exception as e:
-        err = e
-
-      finally:
-        try:
-          if err:
-            log('{}: {}. Reconnecting to {} ...'.format(type(err).__name__, str(err), self.server), level='DEBUG')
-
-            self.reconnect(terminate=False)
-
-            counter = self.select(folder)
-            if counter > total_msgs:
-              evaluate(total_msgs, counter, callback)
-
-            total_msgs = counter
-
-        except Exception as e:
-          log('{}: {}. Disconnect'.format(type(e).__name__, str(e)), level='ERROR')
-          #self.close(terminate=False)
-          break # --> will break out of the loop and quit update, #raise # --> will raise Exeption to main and terminate program
+        log('[{}] Error: {}'.format(self.name, str(e)), level='ERROR')
+        break
 
     self.isRunning = False
 
@@ -1081,49 +1055,38 @@ if __name__ == '__main__':
   if DB_FILE:
     try:
       mydb = Database(DB_FILE)
+
     except Exception as e:
       log('An error occured while initializing message database {}: {}, {}'.format(DB_FILE, type(e).__name__, str(e)), level='ERROR')
       DB_FILE = None
 
   for account in ACCOUNTS:
-    count = 0
+    try:
+      log('[{}] Connecting ...'.format(account['name']), level='DEBUG')
+      account['connection'] = MailBox(account['name'], account['imap_host'], account['user'],
+                                account['password'], port=account['imap_port'],
+                                ssl=account['imap_ssl'], updated=account['updated'],
+                                **account['oauth2_parms'])
 
-    while count < 3:
-      try:
-        log('Connecting to mail account {} ...'.format(account['name']), level='DEBUG')
-        account['connection'] = MailBox(account['imap_host'], account['user'],
-                                  account['password'], port=account['imap_port'],
-                                  ssl=account['imap_ssl'], updated=account['updated'],
-                                  **account['oauth2_parms'])
-        break
-
-      except OAUTH2_TOKEN_ERROR:
-        #account['oauth2_parms']['refresh_token'] = ''
-        account['oauth2_parms']['refresh_token'] = None
-        count += 1
-        continue
-
-      except Exception as e:
-        log(' - An error occured while initializing account {}: {}, {} --> Skip.'.format(account['name'], type(e).__name__, str(e)), level='ERROR')
-        break
+    except:
+      log('[{}] Initialization error. Skip'.format(account['name']), level='ERROR')
+      pass
 
     if 'connection' in account:
       account['connection'].monitor('Inbox', callback=show, catchup=args.update)
-      sleep(1)
+      account['reauths'] = Value('i', 0)
+
+    sleep(5)
 
   try:
     while(True):
       # Check if processes are still alive:
       for account in ACCOUNTS:
-        if 'connection' in account and not account['connection'].is_idle():
-          log('Mailbox {} disconnected. Reconnecting ...'.format(account['name']), level='DEBUG')
-          try:
-            #account['connection'].connect()
-            account['connection'].reconnect()
-          except:
-            raise
-          account['connection'].monitor('Inbox', callback=show)
-        sleep(1)
+        if 'connection' in account and not account['connection'].is_idling() and account['reauths'].value < MAX_REAUTHS:
+          log('[{}] Reconnecting ...'.format(account['name']), level='DEBUG')
+          account['connection'].monitor('Inbox', callback=show, delay=account['reauths'])
+
+        sleep(5)
 
   except (KeyboardInterrupt, SystemExit):
     # Overwrite output of '^C' in case of KeyboardInterrupt:

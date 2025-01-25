@@ -412,3 +412,24 @@ def device_auth_request(client_id, client_secret, device_code, expires_in=600, i
     sleep(interval)
 
   raise Exception('Timeout or code expired')
+
+
+# google only
+# curl -d -X -POST --header "Content-type:application/x-www-form-urlencoded" https://oauth2.googleapis.com/revoke?token=<token>
+def revoke_token(token):
+  data = {
+    'token': token
+  }
+
+  url = 'https://oauth2.googleapis.com/revoke'
+
+  r = requests.post(url, data=data)
+  response = r.json()
+
+  if not r.ok:
+    if 'error' in response:
+      raise Exception(response.get('error_description'))
+    else:
+      raise Exception('Request to url {} failed with status code {}.'.format(url, r.status_code))
+
+  return True

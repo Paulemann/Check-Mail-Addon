@@ -11,6 +11,9 @@ from socket import error as socket_error, create_connection as create_connection
 class IMAP_IDLE_FAILED(Exception):
   pass
 
+class IMAP_IDLE_NO_DATA(Exception):
+  pass
+
 class IMAP_IDLE_DISCONNECT(Exception):
   pass
 
@@ -30,7 +33,7 @@ class IMAP_AUTH_ERROR(Exception):
 def done(connection, debug=None):
   if connection.state == 'IDLE':
     if debug:
-      debug('Sending \'DONE\' to terminate {} IDLE process'.format(connection.tag.decode()))
+      debug('{} IDLE: Sending \'DONE\' ...'.format(connection.tag.decode()))
     connection.send(b'DONE' + imaplib.CRLF)
 
 
@@ -68,7 +71,8 @@ def idle(connection, timeout=840, debug=None):
           if not data:
             if debug:
               debug('{} IDLE: No data'.format(connection.tag.decode()))
-            break
+            #break
+            raise IMAP_IDLE_NO_DATA('No data') # other end has shutdown the connection
 
           data_left = connection.sock.pending()
           while data_left:
