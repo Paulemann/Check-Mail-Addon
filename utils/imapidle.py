@@ -30,6 +30,10 @@ class IMAP_AUTH_ERROR(Exception):
   pass
 
 
+def is_idle(connection):
+  return connection.state == 'IDLE'
+
+
 def done(connection, debug=None):
   if connection.state == 'IDLE':
     if debug:
@@ -90,13 +94,19 @@ def idle(connection, timeout=840, debug=None):
           for response in responses:
 
             if debug:
-              debug('{} IDLE: {}'.format(connection.tag.decode(), response.decode()))
+              if response.startswith(connection.tag):
+                resp = response.split(maxsplit=1)[1]
+              else:
+                resp = response
+              debug('{} IDLE: {}'.format(connection.tag.decode(), resp.decode()))
 
             #if response.startswith(b'+'):
             #  connection.state = 'IDLE'
 
             if response.startswith(connection.tag + b' OK'):
-              raise IMAP_IDLE_COMPLETE('IDLE completed (\'{}\')'.format(response.decode()))
+              return
+              #break
+              #raise IMAP_IDLE_COMPLETE('IDLE completed (\'{}\')'.format(response.decode()))
 
             elif response.startswith(b'* BYE '):
               raise IMAP_IDLE_DISCONNECT('Connection closed by server (\'{}\')'.format(response.decode()))
@@ -135,3 +145,4 @@ def idle(connection, timeout=840, debug=None):
 #imaplib.Debug = 4
 #imaplib.IMAP4.idle = idle
 #imaplib.IMAP4.done = done
+#imaplib.IMAP4.is_idle = is_idle

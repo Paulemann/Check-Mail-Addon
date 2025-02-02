@@ -78,7 +78,7 @@ def device_auth_get(verification_url, user_code):
     if host_is_up(host, KODI['port']):
       kodi_request(host, 'GUI.ShowNotification', params={'title': LOCALE['auth_required'],
         'message': LOCALE['device_auth_message'].format(verification_url, user_code),
-        'displaytime': 10000},
+        'displaytime': 5000},
         port=KODI['port'], user=KODI['user'], password=KODI['password'])
     else:
       log('[{}] Kodi host {} is down or unreachable'.format(account_name, host), level='DEBUG')
@@ -88,8 +88,6 @@ def device_auth_get(verification_url, user_code):
     MAILER.send(OAUTH2['notify'], LOCALE['auth_required'],
       LOCALE['device_auth_message_text'].format(verification_url, user_code),
       html=LOCALE['device_auth_message_html'].format(verification_url, user_code))
-  #else:
-  #  print('Enter this url in a browser and enter the code {} to authorize your device to receive emails:\n{}'.format(user_code, verification_url)) # --> log?
 
   return OAUTH2['wait']
 
@@ -107,7 +105,7 @@ def auth_get(authorization_url, redirect_uri):
     if host_is_up(host, KODI['port']):
       kodi_request(host, 'GUI.ShowNotification', params={'title': LOCALE['auth_required'],
        'message': LOCALE['auth_message'].format(authorization_url),
-       'displaytime': 10000},
+       'displaytime': 5000},
        port=KODI['port'], user=KODI['user'], password=KODI['password'])
     else:
       log('[{}] Kodi host {} is down or unreachable'.format(account_name, host), level='DEBUG')
@@ -131,12 +129,6 @@ def auth_get(authorization_url, redirect_uri):
       raise
     else:
       log('[{}] ***** Local web server stopped: authorization code received *********************'.format(account_name), level='INFO')
-  #else:
-  #  print('Enter this url in a browser to authorize your application to receive emails:\n{}'.format(authorization_url)) # --> log?
-  #  redirect_url = input('Paste the full redirect URL here: ')
-
-  #  query = parse_qs(urlparse(redirect_url).query)
-  #  authorization_code = queries.get('code')
 
   return authorization_code
 
@@ -268,26 +260,27 @@ def read_value(section, option, type='str', default=None, config=None):
       return default
 
     if type == 'int':
-      default =  default or 0
+      default = default or 0
       return int(config.get(section, option))
 
     elif type == 'str':
-      default =  default or ''
+      default = default or ''
       return config.get(section, option)
 
     elif type == 'list':
-      default =  default or []
+      default = default or []
       return [p.strip(' "\'').lower() for p in config.get(section, option).split(',')]
 
     elif type == 'csv':
-      default =  default or []
+      default = default or []
       return [int(p) for p in config.get(section, option).split(',')]
 
     elif type == 'bool':
-      default =  default or False
+      default = default or False
       return config.get(section, option) == 'yes'
 
     elif type == 'date':
+      default = default or datetime.min
       return datetime.strptime(config.get(section, option), TIME_FMT)
 
   except:
@@ -321,10 +314,7 @@ def save_value(section, option, value):
     log('Updating option \'{}\' in section [{}] of file {} failed: {}'.format(option, section, CONFIG_FILE, str(e)), level='ERROR')
     return False
 
-  if value is False:
-    log('Option \'{}\' in section [{}] of file {} removed'.format(option, section, CONFIG_FILE), level='DEBUG')
-  else:
-    log('Option \'{}\' in section [{}] of file {} updated'.format(option, section, CONFIG_FILE), level='DEBUG')
+  log('Option \'{}\' in section [{}] of file {} {}'.format(option, section, CONFIG_FILE, 'removed' if value is False else 'updated'), level='DEBUG')
 
   return True
 
@@ -343,6 +333,10 @@ def remove_token(section):
 
 def reload_token(section):
   return read_value(section, 'refresh_token')
+
+
+def reload_timestamp(section):
+  return read_value(section, 'updated', type='date')
 
 
 def read_section(section, options, config):
@@ -403,7 +397,7 @@ def read_config():
       'auth_message_text':        {'type': 'str', 'default': AUTH_TEXT},
       'device_auth_message_text': {'type': 'str', 'default': DEVICE_AUTH_TEXT},
       'auth_message_html':        {'type': 'str', 'default': AUTH_HTML},
-      'device_auth_message_html': {'type': 'str', 'default': DEVICE_AUTH_HTML},
+      'device_auth_message_html': {'type': 'str', 'default': DEVICE_AUTH_HTML}
       }
     LOCALE = read_section('Customization', locale_options, config)
 
@@ -432,7 +426,7 @@ def read_config():
         'smtp_port': {'type': 'int',  'test': is_int, 'default': 587},
         'user':      {'type': 'str',  'default': account['name'], 'mandatory': True},
         'password':  {'type': 'str'},
-        'updated':   {'type': 'date'},
+        #'updated':   {'type': 'date'}
         }
       account.update(read_section(account['name'], account_options, config))
 
@@ -445,7 +439,7 @@ def read_config():
           'client_secret': {'type': 'str'},
           'refresh_token': {'type': 'str'},
           'tenant_id':     {'type': 'str', 'default': 'consumers' if account['name'].split('@')[1].split('.')[0] in MICROSOFT_DOMAINS else ''},
-          'redirect_uri':  {'type': 'str', 'test': is_https},
+          'redirect_uri':  {'type': 'str', 'test': is_https}
           }
         account['oauth2_parms'] = read_section(account['name'], oauth2_parms, config)
 
@@ -470,7 +464,7 @@ def read_config():
 
 
 class MailBox(object):
-  def __init__(self, name, server, user, password, port=None, ssl=True, updated=None, **oauth2_parms):
+  def __init__(self, name, server, user, password, port=None, ssl=True, **oauth2_parms):
     self.name     = name
     self.server   = server
     self.user     = user
@@ -478,27 +472,21 @@ class MailBox(object):
     self.port     = port
     self.ssl      = ssl
 
+    self.last_updated = reload_timestamp(self.name)
+
     if oauth2_parms:
       #for attr in oauth2_parms.keys():
       for attr in ['client_id', 'client_secret', 'refresh_token', 'redirect_uri', 'callback', 'tenant_id']:
         setattr(self, attr, oauth2_parms.get(attr))
 
-    if updated:
-      log('[{}] Last message received on {}'.format(self.name, updated.strftime('%B %-d, %Y at %-H:%M')), level='DEBUG')
-      self.updated = updated
-    else:
-      log('[{}] Date of last message unknown'.format(self.name), level='DEBUG')
-      self.updated = datetime.now().replace(second=0, microsecond=0)
 
-
-  def monitor(self, folder, callback=None, catchup=False, delay=None):
-    self.isRunning = False
-    self.mon = Process(target=self.update, args=(folder, callback, catchup, delay,))
+  def monitor(self, folder, callback=None, delay=None):
+    self.mon = Process(target=self.update, args=(folder, callback, delay,))
     self.mon.start()
 
 
   def is_idling(self):
-    return self.mon.is_alive() # and self.isRunning
+    return self.mon.is_alive()
 
 
   def close(self):
@@ -520,7 +508,6 @@ class MailBox(object):
           pass
 
     try:
-      self.isRunning = False
       if hasattr(self, 'mon') and self.mon:
         self.mon.terminate()
 
@@ -565,11 +552,13 @@ class MailBox(object):
   def num2uid(self, num):
     status, data = self.imap.fetch(num, 'UID')
     if status == 'OK' and data:
+      #return data[0].split()[-1].strip(b'()')
       for item in data:
         resp = [i.strip(b'()') for i in item.split()]
         if resp[0] == num and resp[1] == b'UID':
           return resp[2]
-    return None
+    else:
+      return None
 
 
   def connect(self):
@@ -666,18 +655,18 @@ class MailBox(object):
       raise Exception('Mailbox folder unnamed')
 
 
-  def update(self, folder, callback, catchup=False, delay=None):
+  def update(self, folder, callback, delay=None):
 
-    def evaluate(start, end, callback):
-      start_uid = self.num2uid(str(start).encode())
+    def evaluate(last_seq_num, callback):
+      start_uid = self.num2uid(str(last_seq_num + 1).encode())
+
+      if not start_uid:
+        return None
+
       uid_list = self.search('UID {}:*'.format(int(start_uid)))
 
       if uid_list:
-        uid_list = [u for u in uid_list if u != start_uid]
-        end = max(end, len(uid_list) + start)
-
-      if end > start:
-        log('[{}] Found {} new UID{}: {}'.format(self.name, end - start, 's' if (end - start) > 1 else '', ', '.join([u.decode('utf-8') for u in uid_list])), level='DEBUG')
+        log('[{}] Found {} new UID{}: {}'.format(self.name, len(uid_list), 's' if len(uid_list) > 1 else '', ', '.join([u.decode('utf-8') for u in uid_list])), level='DEBUG')
 
         for uid in uid_list:
           email_msg = self.fetch(uid)
@@ -688,19 +677,26 @@ class MailBox(object):
               timestamp = ''.join(timestamp.split('\r\n'))
             except:
               timestamp = datetime.now().astimezone().strftime("%a, %d %b %Y %H:%M:%S %z")
-            self.updated = datetime.fromtimestamp(mktime_tz(parsedate_tz(timestamp)))
-            save_timestamp(self.name, self.updated.strftime(TIME_FMT))
+            received = datetime.fromtimestamp(mktime_tz(parsedate_tz(timestamp)))
+            if received > self.last_updated:
+              self.last_updated = received
 
-          if email_msg and callback:
-            callback(self.user, email_msg)
+            if callback:
+              callback(self.user, email_msg)
+
+        save_timestamp(self.name, self.last_updated.strftime(TIME_FMT))
+
+        return uid
+
       else:
         log('[{}] No new UID'.format(self.name), level='DEBUG')
+        return None
 
     try:
-      #when delay is specified, calculate wait time before next connect attempt
+      #if delay is set, calculate wait time before next connect attempt
       if delay:
         wait = (((MIN_WAIT_TIME // 60) ** delay.value) - 1) * 60
-        if wait > 0
+        if wait > 0:
           log('[{}] Waiting {} secs. before reconnecitng ...'.format(self.name, wait), level='DEBUG')
           sleep(wait)
 
@@ -730,66 +726,79 @@ class MailBox(object):
       log('[{}] Error: {}'.format(self.name, str(e)), level='ERROR')
       return
 
-    if catchup:
-      log('[{}] Retrieving unread messages ...'.format(self.name), level='DEBUG')
+    self.last_updated = reload_timestamp(self.name)
+    log('[{}] Retrieving unread messages since last update on {}...'.format(self.name, self.last_updated.strftime(TIME_FMT).split()[0]), level='DEBUG')
 
-      # Fetch all unread messages since last update:
-      date = self.updated.strftime("%d-%b-%Y")
+    # Fetch all unread messages since last update:
+    date = self.last_updated.strftime("%d-%b-%Y")
 
-      # Fetch all unread messages of past x days:
-      #date = (date.today() - timedelta(x)).strftime("%d-%b-%Y")
+    # Fetch all unread messages of past x days:
+    #date = (date.today() - timedelta(x)).strftime("%d-%b-%Y")
 
-      uid_list = self.search('SENTSINCE', date)
+    uid_list = self.search('SENTSINCE', date)
+    saved = self.last_updated
 
-      # Fetch unread messages only for today:
-      #today = date.today().strftime("%d-%b-%Y")
-      #uid_list = self.search('ON', today)
-
+    try:
       if uid_list:
-        log('[{}] Found {} unread messages'.format(self.name, len(uid_list)), level='DEBUG')
+        log('[{0}] Found {1} unread message{2}. UID{2}: {3}'.format(self.name, len(uid_list), 's' if len(uid_list) > 1 else '', ', '.join([u.decode('utf-8') for u in uid_list])), level='DEBUG')
+
         for uid in uid_list:
           email_msg = self.fetch(uid)
-          callback(self.user, email_msg)
-      else:
-        log('[{}] No unread messages'.self,name, level='DEBUG')
 
-    self.isRunning = True
+          if 'received' in email_msg:
+            timestamp = email_msg['received'].split(';')[-1].strip()
+          else:
+            timestamp = email_msg['Date']
 
-    while(self.isRunning):
-      new_msg = False
-      err = None
+          timestamp = ''.join(timestamp.split('\r\n'))
+          received = datetime.fromtimestamp(mktime_tz(parsedate_tz(timestamp)))
 
+          if received > self.last_updated:
+            log('[{}] Found new unread message. Received on {}. UID: {}'.format(self.name, received.strftime(TIME_FMT), uid.decode('utf-8')), level='DEBUG')
+            self.last_updated = received
+
+            if callback:
+              callback(self.user, email_msg)
+
+        if self.last_updated > saved:
+          save_timestamp(self.name, self.last_updated.strftime(TIME_FMT))
+
+      if self.last_updated == saved:
+        log('[{}] No missed messages'.format(self.name), level='DEBUG')
+
+    except Exception as e:
+      log('[{}] Error: {}'.format(self.name, str(e)), level='DEBUG')
+
+    while(True):
       try:
+        new_msgs = 0
+
         for num, msg in self.imap.idle(timeout=IDLE_TIMEOUT, debug=debug):
           if msg == b'EXISTS':
-            log('[{}] {} updated. {} new messages'.format(self.name, folder, int(num) -total_msgs), level='DEBUG')
+            new_msgs = int(num) - total_msgs
+            log('[{}] {} updated: {} {} message{}'.format(self.name, folder, abs(new_msgs), 'deleted' if new_msgs < 0 else 'new', 's' if abs(new_msgs) > 1 else ''), level='DEBUG')
 
-            counter = int(num)
-            if counter > total_msgs:
-              new_msg = True
+            #total_msgs = int(num)
+            total_msgs += new_msgs
+
+            if new_msgs > 0:
               self.imap.done(debug=debug)
-              continue
 
-            total_msgs = counter
-
-      except IMAP_IDLE_COMPLETE:
-        if new_msg:
-          evaluate(total_msgs, counter, callback)
-          total_msgs = counter
+        if new_msgs > 0 and not self.imap.is_idle():
+          last_uid = evaluate(total_msgs - new_msgs, callback)
+          log('[{}] Last UID: {}'.format(self.name, last_uid.decode('utf-8')), level='DEBUG')
 
         log('[{}] Restarting IDLE ...'.format(self.name), level='DEBUG')
-        continue
 
       except Exception as e:
         log('[{}] Error: {}'.format(self.name, str(e)), level='ERROR')
         break
 
-    self.isRunning = False
-
 
 #imaplib.Debug = 4
 imaplib.IMAP4.idle = idle
 imaplib.IMAP4.done = done
+imaplib.IMAP4.is_idle = is_idle
 
 
 def kodi_request(host, method, params=None, port=8080, user=None, password=None):
@@ -923,15 +932,15 @@ def show(user, message):
         if part.get_content_type() == 'text/plain':
           charset = part.get_content_charset('iso-8859-1')
           msg['text'] = part.get_payload(decode=True).decode(charset, 'replace')
-          log('Message text body: {} bytes'.format(len(msg['text'])), level='DEBUG')
+          log('Message text body:   {} bytes'.format(len(msg['text'])), level='DEBUG')
 
         if part.get_content_type() == 'text/html':
           charset = part.get_content_charset('iso-8859-1')
           msg['html'] = part.get_payload(decode=True).decode(charset, 'replace') #.decode('raw-unicode-escape')
-          log('Message html body: {} bytes'.format(len(msg['html'])), level='DEBUG')
+          log('Message html body:   {} bytes'.format(len(msg['html'])), level='DEBUG')
           if not msg.get('text'):
             msg['text'] = html2text(msg['html'])
-            log('Message text body: {} bytes (converted from html)'.format(len(msg['text'])), level='DEBUG')
+            log('Message text body:   {} bytes (converted from html)'.format(len(msg['text'])), level='DEBUG')
 
         continue
 
@@ -1014,7 +1023,7 @@ if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Sends a notification to a kodi host when a new email is received')
 
   parser.add_argument('-d', '--debug', dest='debug', action='store_true', help="Output debug messages (Default: False)")
-  parser.add_argument('-u', '--update', dest='update', action='store_true', help="Show messages since last recorded update (Default: False)")
+  #parser.add_argument('-u', '--update', dest='update', action='store_true', help="Show messages since last recorded update (Default: False)")
   parser.add_argument('-l', '--logfile', dest='log_file', default=None, help="Path to log file (Default: None=stdout)")
   parser.add_argument('-t', '--timeout', dest='timeout', default=840, help="Connection Timeout (Default: 840 sec. = 14 min.)")
   parser.add_argument('-c', '--config', dest='config_file', default=os.path.splitext(os.path.basename(__file__))[0] + '.ini', help="Path to config file (Default: <Script Name>.ini)")
@@ -1060,23 +1069,22 @@ if __name__ == '__main__':
       log('An error occured while initializing message database {}: {}, {}'.format(DB_FILE, type(e).__name__, str(e)), level='ERROR')
       DB_FILE = None
 
+  # Initialize
   for account in ACCOUNTS:
     try:
       log('[{}] Connecting ...'.format(account['name']), level='DEBUG')
       account['connection'] = MailBox(account['name'], account['imap_host'], account['user'],
                                 account['password'], port=account['imap_port'],
-                                ssl=account['imap_ssl'], updated=account['updated'],
-                                **account['oauth2_parms'])
+                                ssl=account['imap_ssl'], **account['oauth2_parms'])
+
+      account['connection'].monitor('Inbox', callback=show)
+      account['reauths'] = Value('i', 0)
 
     except:
       log('[{}] Initialization error. Skip'.format(account['name']), level='ERROR')
-      pass
+      continue
 
-    if 'connection' in account:
-      account['connection'].monitor('Inbox', callback=show, catchup=args.update)
-      account['reauths'] = Value('i', 0)
-
-    sleep(5)
+    sleep(2)
 
   try:
     while(True):
