@@ -76,7 +76,7 @@ def device_auth_get(verification_url, user_code):
   log('[{}] Sending notification to kodi host(s) {}'.format(account_name, ', '.join(KODI['host'])), level='DEBUG')
   for host in KODI['host']:
     if host_is_up(host, KODI['port']):
-      kodi_request(host, 'GUI.ShowNotification', params={'title': LOCALE['auth_required'],
+      kodi_request(host, 'GUI.ShowNotification', params={'title': LOCALE['auth_required'].format(account_name),
         'message': LOCALE['device_auth_message'].format(verification_url, user_code),
         'displaytime': 5000},
         port=KODI['port'], user=KODI['user'], password=KODI['password'])
@@ -85,7 +85,7 @@ def device_auth_get(verification_url, user_code):
 
   if MAILER:
     log('[{}] Sending notification to mail recipient(s) {}'.format(account_name, ', '.join(OAUTH2['notify'])), level='DEBUG')
-    MAILER.send(OAUTH2['notify'], LOCALE['auth_required'],
+    MAILER.send(OAUTH2['notify'], LOCALE['auth_required'].format(account_name),
       LOCALE['device_auth_message_text'].format(verification_url, user_code),
       html=LOCALE['device_auth_message_html'].format(verification_url, user_code))
 
@@ -103,7 +103,7 @@ def auth_get(authorization_url, redirect_uri):
   log('[{}] Sending notification to kodi host(s) {}'.format(account_name,', '.join(KODI['host'])), level='DEBUG')
   for host in KODI['host']:
     if host_is_up(host, KODI['port']):
-      kodi_request(host, 'GUI.ShowNotification', params={'title': LOCALE['auth_required'],
+      kodi_request(host, 'GUI.ShowNotification', params={'title': LOCALE['auth_required'].format(account_name),
        'message': LOCALE['auth_message'].format(authorization_url),
        'displaytime': 5000},
        port=KODI['port'], user=KODI['user'], password=KODI['password'])
@@ -112,7 +112,7 @@ def auth_get(authorization_url, redirect_uri):
 
   if MAILER:
     log('[{}] Sending notification to mail recipient(s) {}'.format(account_name, ', '.join(OAUTH2['notify'])), level='DEBUG')
-    MAILER.send(OAUTH2['notify'], LOCALE['auth_required'],
+    MAILER.send(OAUTH2['notify'], LOCALE['auth_required'].format(account_name),
       LOCALE['auth_message_text'].format(authorization_url),
       html=LOCALE['auth_message_html'].format(authorization_url))
 
@@ -343,7 +343,10 @@ def read_section(section, options, config):
   section_cfg = {}
 
   for option, value in options.items():
-    section_cfg[option] = read_value(section, option, value.get('type'), value.get('default'), config)
+    if config is None:
+      section_cfg[option] = value.get('default')
+    else:
+      section_cfg[option] = read_value(section, option, value.get('type'), value.get('default'), config)
 
     if value.get('mandatory') and not section_cfg[option]:
       log('Missing mandatory config value; section: [{}], option: {}'. format(section, option), level='ERROR')
@@ -363,11 +366,42 @@ def read_section(section, options, config):
   return section_cfg
 
 
+def read_locale():
+  global LOCALE
+
+  try:
+    if os.path.exists(LOCALE_FILE):
+      config = configparser.ConfigParser()
+      config.read([os.path.abspath(LOCALE_FILE)])
+    else:
+      log(' - Missíng localization file {}. Using defaults ...'.format(LOCALE_FILE), level='ERROR')
+      config = None
+
+    locale_options = {
+      'new_message_for':          {'type': 'str', 'default': 'New message for'},
+      'from':                     {'type': 'str', 'default': 'From'},
+      'subject':                  {'type': 'str', 'default': 'Subject'},
+      'auth_required':            {'type': 'str', 'default': 'Authorization required for email account {}'},
+      'auth_message':             {'type': 'str', 'default': 'Use a web browser to open the page {} to authorize your application to read email messages.'},
+      'device_auth_message':      {'type': 'str', 'default': 'Use a web browser to open the page {} and enter the code {} to authorize your device.'},
+      'auth_message_text':        {'type': 'str', 'default': AUTH_TEXT},
+      'device_auth_message_text': {'type': 'str', 'default': DEVICE_AUTH_TEXT},
+      'auth_message_html':        {'type': 'str', 'default': AUTH_HTML},
+      'device_auth_message_html': {'type': 'str', 'default': DEVICE_AUTH_HTML}
+      }
+    LOCALE = read_section('Localization', locale_options, config)
+
+    log(' - Done', level='DEBUG')
+
+  except:
+    raise
+
+
 def read_config():
-  global KODI, ACCOUNTS, ATTACHMENTS, LOCALE, MAILER, OAUTH2
+  global KODI, ACCOUNTS, ATTACHMENTS, MAILER, OAUTH2
 
   if not os.path.exists(CONFIG_FILE):
-    log('Missíng configuration file {}'.format(CONFIG_FILE), level='ERROR')
+    log(' - Missíng configuration file {}'.format(CONFIG_FILE), level='ERROR')
     raise Exception('Missing config file')
 
   try:
@@ -386,20 +420,6 @@ def read_config():
       'wait':   {'type': 'int', 'default': 300}
       }
     OAUTH2 = read_section('OAuth2', oauth2_options, config)
-
-    locale_options = {
-      'new_message_for':          {'type': 'str', 'default': 'New message for'},
-      'from':                     {'type': 'str', 'default': 'From'},
-      'subject':                  {'type': 'str', 'default': 'Subject'},
-      'auth_required':            {'type': 'str', 'default': 'Authorization required'},
-      'auth_message':             {'type': 'str', 'default': 'Use a web browser to open the page {} to authorize your application to read email messages.'},
-      'device_auth_message':      {'type': 'str', 'default': 'Use a web browser to open the page {} and enter the code {} to authorize your device.'},
-      'auth_message_text':        {'type': 'str', 'default': AUTH_TEXT},
-      'device_auth_message_text': {'type': 'str', 'default': DEVICE_AUTH_TEXT},
-      'auth_message_html':        {'type': 'str', 'default': AUTH_HTML},
-      'device_auth_message_html': {'type': 'str', 'default': DEVICE_AUTH_HTML}
-      }
-    LOCALE = read_section('Customization', locale_options, config)
 
     kodi_options = {
       'host': {'type': 'list', 'test': is_hostname},
@@ -458,6 +478,8 @@ def read_config():
     else:
       log(' - No SMTP data', level='DEBUG')
       MAILER = None
+
+    log(' - Done', level='DEBUG')
 
   except:
     raise
@@ -1037,33 +1059,39 @@ if __name__ == '__main__':
   IDLE_TIMEOUT = int(args.timeout)
   __DEBUG__    = args.debug
 
+  LOCALE_FILE  = os.path.splitext(os.path.basename(__file__))[0] + '.loc'
+
   if LOG_FILE:
     #logging.basicConfig(filename=LOG_FILE, format='%(asctime)s [%(levelname)s]: %(message)s', datefmt='%m/%d/%Y %H:%M:%S', filemode='w', level=logging.DEBUG)
     logging.basicConfig(filename=LOG_FILE, format='%(asctime)s [%(levelname)s]: %(message)s', datefmt='%m/%d/%Y %H:%M:%S', filemode='a', level=logging.DEBUG)
 
   log('***** {} started *****'.format(os.path.basename(__file__)), level='INFO')
 
-  log('Configured options:', level='DEBUG')
+  log('Arguments:', level='DEBUG')
   log(' - Output Debug:  {}'.format(__DEBUG__), level='DEBUG')
-  log(' - Log File:      {}'.format(LOG_FILE), level='DEBUG')
   log(' - IDLE Timeout:  {} sec.'.format(IDLE_TIMEOUT), level='DEBUG')
-  log(' - Config. File:  {}'.format(CONFIG_FILE), level='DEBUG')
-  log(' - Msg. Database: {}'.format(DB_FILE), level='DEBUG')
+  log(' - Log File:      {}'.format(os.path.abspath(LOG_FILE)), level='DEBUG')
+  log(' - Config File:   {}'.format(os.path.abspath(CONFIG_FILE)), level='DEBUG')
+  log(' - Msg. Database: {}'.format(os.path.abspath(DB_FILE) if DB_FILE else '-'), level='DEBUG')
 
   try:
-    log('Reading configuration from file {} ...'.format(CONFIG_FILE), level='DEBUG')
+    log('Reading localization file {} ...'.format(os.path.abspath(LOCALE_FILE)), level='DEBUG')
+    read_locale()
+
+    log('Reading configuration file {} ...'.format(os.path.abspath(CONFIG_FILE)), level='DEBUG')
     read_config()
+
   except Exception as e:
     log('Configuration failed with error: {}. Abort'.format(str(e)), level='ERROR')
     sys.exit(1)
 
-  log(' - Configuration successful', level='DEBUG')
+  log('Configuration successful:', level='DEBUG')
   log(' - Accounts:      {}'.format(', '.join([account['name'] for account in ACCOUNTS])), level='DEBUG')
   log(' - Attachments of types {} sent from {} will be saved in {}'.format(', '.join(ATTACHMENTS['type']), ', '.join(ATTACHMENTS['from']), ATTACHMENTS['path']), level='DEBUG')
 
   if DB_FILE:
     try:
-      mydb = Database(DB_FILE)
+      mydb = Database(os.path.abspath(DB_FILE))
 
     except Exception as e:
       log('An error occured while initializing message database {}: {}, {}'.format(DB_FILE, type(e).__name__, str(e)), level='ERROR')

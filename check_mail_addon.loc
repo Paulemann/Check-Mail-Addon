@@ -1,0 +1,33 @@
+[Localization]
+new_message_for = Neue Nachricht für
+from = Von
+subject = Betreff
+auth_required = Autorisierung erforderlich für E-Mail-Konto {}
+auth_message = Öffne die Seite {} in einem Web-Bowser, um die Anwendung zum Empfang von E-Mail-Nachrichten zu berechtigen.
+device_auth_message = Öffne die Seite {} in einem Web-Bowser und gib den Code {} zur Geräteautorisierung ein.
+device_auth_message_text = Die Berechtigung zum Empfang von E-Mail-Nachrichten muss erneuert oder erstmalig erteilt werden.
+	Verwende einen Webbrowser, um die Seite {} zu öffnen.
+	Gib dort den Code {} ein, um Dein Gerät für den Empfang zu autorisieren.
+device_auth_message_html = 
+	<html>
+	<body>
+	<p>
+	Die Berechtigung zum Empfang von E-Mail-Nachrichten muss erneuert oder erstmalig erteilt werden.<br>
+	Klick auf diesen <a href="{}">Link</a> und gib auf der Webseite den Code {} ein,
+	um Dein Gerät für den Empfang zu autorisieren.
+	</p>
+	</body>
+	</html>
+auth_message_text = Die Berechtigung zum Empfang von E-Mail-Nachrichten muss erneuert oder erstmalig erteilt werden.
+	Verwende einen Webbrowser, um die Seite {} zu öffnen. Bestätige dort,
+	dass Deine Anwendung für den Empfang autorisiert ist.
+auth_message_html = 
+	<html>
+	<body>
+	<p>
+	Die Berechtigung zum Empfang von E-Mail-Nachrichten muss erneuert oder erstmalig erteilt werden.<br>
+	Klick auf diesen <a href="{}">Link</a> und bestätige dort, dass Deine Anwendung für den Empfang autorisiert ist.
+	</p>
+	</body>
+	</html>
+
