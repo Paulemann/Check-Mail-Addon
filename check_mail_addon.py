@@ -789,7 +789,7 @@ class MailBox(object):
         log('[{}] No missed messages'.format(self.name), level='DEBUG')
 
     except Exception as e:
-      log('[{}] Error: {}'.format(self.name, str(e)), level='DEBUG')
+      log('[{}] Update failed: {}'.format(self.name, str(e)), level='DEBUG')
 
     while(True):
       try:
@@ -813,7 +813,7 @@ class MailBox(object):
         log('[{}] Restarting IDLE ...'.format(self.name), level='DEBUG')
 
       except Exception as e:
-        log('[{}] Error: {}'.format(self.name, str(e)), level='ERROR')
+        log('[{}] IDLE stopped: {}'.format(self.name, str(e)), level='DEBUG')
         break
 
 
